@@ -42,7 +42,7 @@ export default function App() {
   return (
     <div style={{ maxWidth: 700, margin: '40px auto', fontFamily: 'system-ui' }}>
       <h2>PDF Redactor</h2>
-      <p>The redaction template is built in. Upload PDFs and redact.</p>
+      <p>Upload PDFs. The built-in template applies to all pages.</p>
       <input type="file" accept="application/pdf" multiple onChange={e => setFiles([...e.target.files])} />
       <br /><br />
       <button onClick={run} disabled={busy || !files.length}>

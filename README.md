@@ -1,11 +1,12 @@
 
-# PDF Redactor – Hard-Coded Template (v4.1)
+# PDF Redactor – Hard-Coded Template (v4.2)
 
 ## Redaction Rules
-- Page 1: Black box from top of page down to just before HPI/CC
-- Pages 2+: 1cm top and bottom bands
-- Template is built into the app (no template upload)
+- Page 1:
+  - Full-width header band (1 cm)
+  - Large black box from top down to just before HPI/CC
+- Pages 2+:
+  - 1 cm top band
+  - 1 cm bottom band
 
-## Usage
-npm install
-npm run dev
+Template is fully built in.

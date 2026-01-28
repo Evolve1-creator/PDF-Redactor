@@ -3,19 +3,18 @@ import { PDFDocument, rgb } from 'pdf-lib'
 
 const CM_TO_POINTS = 28.35
 
-// Hard-coded template
 export const TEMPLATE = {
   page1: {
     redactions: [
       {
         x: 0,
         y: 0,
-        width: 612,   // full page width
-        height: 300   // down to just before HPI/CC
+        width: 612,
+        height: 300
       }
     ]
   },
-  repeatFromPage: 2,
+  repeatFromPage: 1, // <-- apply bands starting on page 1
   repeatRedactions: [
     { position: 'top', heightCm: 1 },
     { position: 'bottom', heightCm: 1 }
@@ -30,6 +29,7 @@ export async function redactPdf(bytes) {
     const h = page.getHeight()
     const w = page.getWidth()
 
+    // Page 1 large block
     if (idx === 0) {
       TEMPLATE.page1.redactions.forEach(r => {
         page.drawRectangle({
@@ -42,6 +42,7 @@ export async function redactPdf(bytes) {
       })
     }
 
+    // Header/footer bands (now includes page 1)
     if (idx + 1 >= TEMPLATE.repeatFromPage) {
       TEMPLATE.repeatRedactions.forEach(r => {
         const hp = r.heightCm * CM_TO_POINTS

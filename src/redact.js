@@ -3,27 +3,22 @@ import { PDFDocument, rgb } from 'pdf-lib'
 
 const CM_TO_POINTS = 28.35
 
+// Hard-coded template
 export const TEMPLATE = {
-  "page1": {
-    "redactions": [
+  page1: {
+    redactions: [
       {
-        "x": 40,
-        "y": 60,
-        "width": 520,
-        "height": 120
+        x: 0,
+        y: 0,
+        width: 612,   // full page width
+        height: 300   // down to just before HPI/CC
       }
     ]
   },
-  "repeatFromPage": 2,
-  "repeatRedactions": [
-    {
-      "position": "top",
-      "heightCm": 1
-    },
-    {
-      "position": "bottom",
-      "heightCm": 1
-    }
+  repeatFromPage: 2,
+  repeatRedactions: [
+    { position: 'top', heightCm: 1 },
+    { position: 'bottom', heightCm: 1 }
   ]
 }
 
@@ -35,14 +30,14 @@ export async function redactPdf(bytes) {
     const h = page.getHeight()
     const w = page.getWidth()
 
-    if (idx === 0 && TEMPLATE.page1?.redactions) {
+    if (idx === 0) {
       TEMPLATE.page1.redactions.forEach(r => {
         page.drawRectangle({
           x: r.x,
           y: h - r.y - r.height,
           width: r.width,
           height: r.height,
-          color: rgb(0,0,0)
+          color: rgb(0, 0, 0)
         })
       })
     }
@@ -56,7 +51,7 @@ export async function redactPdf(bytes) {
           y,
           width: w,
           height: hp,
-          color: rgb(0,0,0)
+          color: rgb(0, 0, 0)
         })
       })
     }

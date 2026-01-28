@@ -1,18 +1,11 @@
 
-# PDF Template Redactor v2 (GitHub Ready)
+# PDF Template Redactor v2.0.2
 
-## Features
-- Permanent burned-in redaction
-- Template-based rules
-- Page 1 targeted boxes
-- Pages ≥ N repeating header/footer bands
-- Batch upload → ZIP download
-- 100% browser-only (HIPAA-safe)
+Fixes UI confusion:
+- Clear labels for PDF batch vs template JSON
+- Shows selected file names and counts
+- Chrome-safe ZIP download
 
-## Run
+Run:
 npm install
 npm run dev
-
-## Deploy
-npm run build
-Upload /dist to Vercel, Netlify, or GitHub Pages.

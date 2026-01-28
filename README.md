@@ -1,11 +1,18 @@
 
-# PDF Template Redactor v2.0.2
+# PDF Redactor – Hard‑Coded Template Edition
 
-Fixes UI confusion:
-- Clear labels for PDF batch vs template JSON
-- Shows selected file names and counts
-- Chrome-safe ZIP download
+## What this does
+- One built‑in redaction template
+- No template upload
+- Page 1: fixed redaction boxes
+- Page 2+: automatic 1cm header + footer bands
+- Upload 1 PDF → download 1 redacted PDF
+- Upload many PDFs → download ZIP
 
-Run:
+## Run
 npm install
 npm run dev
+
+## Deploy
+npm run build
+Deploy the /dist folder.

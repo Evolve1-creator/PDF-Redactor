@@ -1,6 +1,5 @@
 
 import React, { useState } from 'react'
-import { PDFDocument } from 'pdf-lib'
 import { redactors } from './redactors/index.js'
 
 function download(blob, name) {
@@ -24,43 +23,31 @@ export default function App() {
     setBusy(true)
     try {
 
-      if (files.length === 1) {
-        const f = files[0]
+      let nameCounts = {}
+
+      for (const f of files) {
+
         const out = await redactors[selectedRedactor].handler(
           new Uint8Array(await f.arrayBuffer())
         )
 
+        const baseName = f.name.replace(/\.pdf$/i, '')
+
+        nameCounts[baseName] = (nameCounts[baseName] || 0) + 1
+
+        const suffix =
+          nameCounts[baseName] > 1
+            ? `.REDACTED_${nameCounts[baseName]}`
+            : `.REDACTED`
+
+        const newName = `${baseName}${suffix}.pdf`
+
         download(
           new Blob([out], { type: 'application/pdf' }),
-          f.name.replace(/\.pdf$/i, '.REDACTED.pdf')
-        )
-
-      } else {
-
-        const mergedPdf = await PDFDocument.create()
-
-        for (const f of files) {
-
-          const redactedBytes = await redactors[selectedRedactor].handler(
-            new Uint8Array(await f.arrayBuffer())
-          )
-
-          const redactedDoc = await PDFDocument.load(redactedBytes)
-          const copiedPages = await mergedPdf.copyPages(
-            redactedDoc,
-            redactedDoc.getPageIndices()
-          )
-
-          copiedPages.forEach(p => mergedPdf.addPage(p))
-        }
-
-        const finalBytes = await mergedPdf.save()
-
-        download(
-          new Blob([finalBytes], { type: 'application/pdf' }),
-          'Batch_Redacted.pdf'
+          newName
         )
       }
+
     } finally {
       setBusy(false)
     }
@@ -96,11 +83,7 @@ export default function App() {
       <br /><br />
 
       <button onClick={run} disabled={busy || !files.length}>
-        {busy
-          ? 'Working…'
-          : files.length === 1
-            ? 'Redact & Download PDF'
-            : 'Batch Redact → Single PDF'}
+        {busy ? 'Redacting…' : 'Redact & Download Files'}
       </button>
     </div>
   )

@@ -1,7 +1,7 @@
 
 import React, { useState } from 'react'
 import { PDFDocument } from 'pdf-lib'
-import { redactors } from './redactors'
+import { redactors } from './redactors/index.js'
 
 function download(blob, name) {
   const url = URL.createObjectURL(blob)
@@ -24,7 +24,6 @@ export default function App() {
     setBusy(true)
     try {
 
-      // SINGLE FILE
       if (files.length === 1) {
         const f = files[0]
         const out = await redactors[selectedRedactor].handler(
@@ -38,7 +37,6 @@ export default function App() {
 
       } else {
 
-        // 🔥 BATCH MODE → MERGED PDF
         const mergedPdf = await PDFDocument.create()
 
         for (const f of files) {

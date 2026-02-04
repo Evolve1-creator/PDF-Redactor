@@ -1,7 +1,7 @@
 
 import React, { useState } from 'react'
-import JSZip from 'jszip'
-import { redactPdf } from './redact'
+import { PDFDocument } from 'pdf-lib'
+import { redactors } from './redactors'
 
 function download(blob, name) {
   const url = URL.createObjectURL(blob)
@@ -17,22 +17,51 @@ function download(blob, name) {
 export default function App() {
   const [files, setFiles] = useState([])
   const [busy, setBusy] = useState(false)
+  const [selectedRedactor, setSelectedRedactor] = useState("nocharge")
 
   async function run() {
     if (!files.length) return
     setBusy(true)
     try {
+
+      // SINGLE FILE
       if (files.length === 1) {
         const f = files[0]
-        const out = await redactPdf(new Uint8Array(await f.arrayBuffer()))
-        download(new Blob([out], { type: 'application/pdf' }), f.name.replace(/\.pdf$/i, '.REDACTED.pdf'))
+        const out = await redactors[selectedRedactor].handler(
+          new Uint8Array(await f.arrayBuffer())
+        )
+
+        download(
+          new Blob([out], { type: 'application/pdf' }),
+          f.name.replace(/\.pdf$/i, '.REDACTED.pdf')
+        )
+
       } else {
-        const zip = new JSZip()
+
+        // 🔥 BATCH MODE → MERGED PDF
+        const mergedPdf = await PDFDocument.create()
+
         for (const f of files) {
-          const out = await redactPdf(new Uint8Array(await f.arrayBuffer()))
-          zip.file(f.name.replace(/\.pdf$/i, '.REDACTED.pdf'), out)
+
+          const redactedBytes = await redactors[selectedRedactor].handler(
+            new Uint8Array(await f.arrayBuffer())
+          )
+
+          const redactedDoc = await PDFDocument.load(redactedBytes)
+          const copiedPages = await mergedPdf.copyPages(
+            redactedDoc,
+            redactedDoc.getPageIndices()
+          )
+
+          copiedPages.forEach(p => mergedPdf.addPage(p))
         }
-        download(await zip.generateAsync({ type: 'blob' }), 'Redacted_PDFs.zip')
+
+        const finalBytes = await mergedPdf.save()
+
+        download(
+          new Blob([finalBytes], { type: 'application/pdf' }),
+          'Batch_Redacted.pdf'
+        )
       }
     } finally {
       setBusy(false)
@@ -41,12 +70,39 @@ export default function App() {
 
   return (
     <div style={{ maxWidth: 700, margin: '40px auto', fontFamily: 'system-ui' }}>
-      <h2>PDF Redactor</h2>
-      <p>Upload PDFs. The built-in template applies to all pages.</p>
-      <input type="file" accept="application/pdf" multiple onChange={e => setFiles([...e.target.files])} />
+      <h2>Clinical PDF Redactor</h2>
+
+      <label><b>Select Template:</b></label>
+      <br />
+
+      <select
+        value={selectedRedactor}
+        onChange={e => setSelectedRedactor(e.target.value)}
+      >
+        {Object.entries(redactors).map(([key, r]) => (
+          <option key={key} value={key}>
+            {r.label}
+          </option>
+        ))}
+      </select>
+
       <br /><br />
+
+      <input
+        type="file"
+        accept="application/pdf"
+        multiple
+        onChange={e => setFiles([...e.target.files])}
+      />
+
+      <br /><br />
+
       <button onClick={run} disabled={busy || !files.length}>
-        {busy ? 'Working…' : (files.length === 1 ? 'Redact & Download PDF' : 'Redact & Download ZIP')}
+        {busy
+          ? 'Working…'
+          : files.length === 1
+            ? 'Redact & Download PDF'
+            : 'Batch Redact → Single PDF'}
       </button>
     </div>
   )

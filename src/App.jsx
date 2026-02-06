@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react'
+import React, { useEffect, useRef, useState } from 'react'
 import { saveAs } from 'file-saver'
 import JSZip from 'jszip'
 import { pdfjsLib } from './pdfjsWorker'
@@ -24,6 +24,7 @@ export default function App(){
   const [mode, setMode] = useState(RedactionMode.SURGERY_CENTER)
   const [busy, setBusy] = useState(false)
   const [status, setStatus] = useState('Upload one or more PDFs to preview and export a text-searchable redacted PDF.')
+  const [sourceBytes, setSourceBytes] = useState(null)
   const [previewBytes, setPreviewBytes] = useState(null)
   const canvasRef = useRef(null)
 
@@ -32,17 +33,38 @@ export default function App(){
   const onPick = async (ev) => {
     const picked = Array.from(ev.target.files || []).filter(f => /\.pdf$/i.test(f.name))
     setFiles(picked)
+
     if (picked[0]){
       const bytes = new Uint8Array(await picked[0].arrayBuffer())
-      setPreviewBytes(bytes)
+      setSourceBytes(bytes)
       setStatus(`Loaded ${picked.length} file(s). Previewing: ${picked[0].name}`)
     } else {
+      setSourceBytes(null)
       setPreviewBytes(null)
       setStatus('No PDFs selected.')
     }
     ev.target.value = ''
   }
 
+  // Build preview bytes *with redaction applied* whenever file or mode changes.
+  useEffect(() => {
+    let cancelled = false
+    ;(async () => {
+      if (!sourceBytes) return
+      try{
+        const out = await redactPdfBytes(sourceBytes, mode, { onlyFirstPage: true })
+        if (!cancelled) setPreviewBytes(new Uint8Array(out))
+      }catch(err){
+        if (!cancelled) {
+          setPreviewBytes(sourceBytes) // fallback to original
+          setStatus(`Preview build error (showing original): ${err?.message || String(err)}`)
+        }
+      }
+    })()
+    return () => { cancelled = true }
+  }, [sourceBytes, mode])
+
+  // Render preview to canvas whenever preview bytes update
   useEffect(() => {
     let cancelled = false
     ;(async () => {
@@ -51,7 +73,7 @@ export default function App(){
         await renderFirstPageToCanvas(previewBytes, canvasRef.current, 1.25)
         if (!cancelled) setStatus(prev => prev)
       }catch(err){
-        if (!cancelled) setStatus(`Preview error: ${err?.message || String(err)}`)
+        if (!cancelled) setStatus(`Preview render error: ${err?.message || String(err)}`)
       }
     })()
     return () => { cancelled = true }
@@ -67,6 +89,8 @@ export default function App(){
       const blob = new Blob([out], { type: 'application/pdf' })
       saveAs(blob, `${niceName(f.name)}__redacted.pdf`)
       setStatus(`Exported: ${niceName(f.name)}__redacted.pdf (text-searchable)`)
+    } catch (err){
+      setStatus(`Export error: ${err?.message || String(err)}`)
     } finally {
       setBusy(false)
     }
@@ -85,6 +109,8 @@ export default function App(){
       const blob = await zip.generateAsync({ type: 'blob' })
       saveAs(blob, `redacted_pdfs_${new Date().toISOString().slice(0,10)}.zip`)
       setStatus(`Batch export complete: ${files.length} PDFs in a ZIP (outputs are text-searchable).`)
+    } catch (err){
+      setStatus(`Batch export error: ${err?.message || String(err)}`)
     } finally {
       setBusy(false)
     }
@@ -92,6 +118,7 @@ export default function App(){
 
   const clearAll = () => {
     setFiles([])
+    setSourceBytes(null)
     setPreviewBytes(null)
     setStatus('Cleared. Upload PDFs to begin.')
   }
@@ -103,7 +130,7 @@ export default function App(){
           <div className="logo" />
           <div>
             <p className="h1">PDF Redactor</p>
-            <p className="sub">Exports a <b>text-searchable</b> PDF by drawing redaction overlays (no rasterizing).</p>
+            <p className="sub">Preview + export show the same redaction. Output stays <b>text-searchable</b>.</p>
           </div>
         </div>
         <div className="row">
@@ -116,8 +143,7 @@ export default function App(){
           <h2>1) Upload PDFs</h2>
           <input className="input" type="file" accept="application/pdf" multiple onChange={onPick} />
           <div className="small" style={{marginTop:10}}>
-            Tip: You can upload multiple PDFs for batch export. Output keeps the original text layer,
-            so you can still search/copy text outside the redacted region.
+            Preview now shows the redaction overlay (same logic as export).
           </div>
 
           <div className="hr" />
@@ -172,7 +198,7 @@ export default function App(){
           <div className="toast">
             <div style={{display:'flex', gap:8, alignItems:'center', flexWrap:'wrap'}}>
               <span className="kbd">Text-searchable</span>
-              <span className="kbd">No rasterizing</span>
+              <span className="kbd">Rotation-aware</span>
               <span className="kbd">Page 1 only</span>
             </div>
             <div style={{marginTop:8}}>{status}</div>
@@ -185,15 +211,15 @@ export default function App(){
             <canvas ref={canvasRef} />
           </div>
           <div className="small" style={{marginTop:10}}>
-            The preview is rendered with PDF.js. Export uses <span className="kbd">pdf-lib</span> to draw opaque
-            rectangles onto the original PDF pages, preserving the underlying text layer (so search still works).
+            Preview uses the same redaction output bytes that export writes to disk.
+            If your PDFs are rotated, this version still redacts the “top” area as the viewer sees it.
           </div>
         </div>
       </div>
 
       <div className="small" style={{marginTop:14}}>
-        If you previously generated image-based PDFs, that usually means the app was exporting from a canvas screenshot
-        (which flattens text). This version exports directly from the PDF structure instead.
+        If you still don’t see the block: your PDF may have an uncommon rotation/crop box setup.
+        In that case, tell me what kind of PDF it is (Epic? scanner? portal?) and I’ll add crop-box-aware placement.
       </div>
     </div>
   )

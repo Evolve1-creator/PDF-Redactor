@@ -1,13 +1,169 @@
+:root{
+  --bg:#0b1220;
+  --panel:#121a2b;
+  --card:#16213a;
+  --text:#e9eefc;
+  --muted:#a8b3d6;
+  --accent:#7c5cff;
+  --accent2:#35d1a2;
+  --danger:#ff4d6d;
+  --border:rgba(255,255,255,.10);
+}
 
-:root { font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial; }
-body { margin: 0; background: #f1f5f9; color: #0f172a; }
-.wrap { max-width: 900px; margin: 0 auto; padding: 24px; }
-.card { background: #fff; border: 1px solid rgba(15,23,42,.12); border-radius: 14px; padding: 16px; box-shadow: 0 10px 25px rgba(2,6,23,.06); }
-h1 { font-size: 20px; margin: 0 0 8px 0; }
-.small { font-size: 12px; color: #475569; }
-label { display:block; font-size: 12px; color:#334155; margin: 12px 0 6px; font-weight: 600; }
-input[type=file]{ width:100%; }
-button { margin-top: 14px; border:0; border-radius: 10px; padding: 10px 12px; background:#0ea5e9; color:#fff; font-weight: 700; cursor:pointer; }
-button:disabled{ opacity:.5; cursor:not-allowed; }
-.list { margin-top: 10px; padding: 10px; background:#f8fafc; border:1px solid rgba(15,23,42,.08); border-radius: 10px; }
-.mono { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono","Courier New", monospace; font-size: 12px; }
+*{box-sizing:border-box}
+body{
+  margin:0;
+  font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, "Apple Color Emoji","Segoe UI Emoji";
+  background: radial-gradient(1200px 800px at 20% 10%, rgba(124,92,255,.25), transparent 60%),
+              radial-gradient(1000px 700px at 85% 20%, rgba(53,209,162,.18), transparent 55%),
+              var(--bg);
+  color:var(--text);
+}
+a{color:inherit}
+.container{
+  max-width:1100px;
+  margin:0 auto;
+  padding:24px;
+}
+.header{
+  display:flex;
+  gap:12px;
+  align-items:center;
+  justify-content:space-between;
+  margin-bottom:18px;
+}
+.brand{
+  display:flex;
+  align-items:center;
+  gap:12px;
+}
+.logo{
+  width:40px;
+  height:40px;
+  border-radius:14px;
+  background: linear-gradient(135deg, var(--accent), var(--accent2));
+  box-shadow: 0 10px 30px rgba(124,92,255,.25);
+}
+.h1{
+  font-size:18px;
+  font-weight:700;
+  margin:0;
+}
+.sub{
+  margin:2px 0 0 0;
+  color:var(--muted);
+  font-size:13px;
+}
+.grid{
+  display:grid;
+  grid-template-columns: 420px 1fr;
+  gap:18px;
+}
+.card{
+  background: rgba(22,33,58,.82);
+  border:1px solid var(--border);
+  border-radius:18px;
+  padding:16px;
+  box-shadow: 0 18px 50px rgba(0,0,0,.35);
+  backdrop-filter: blur(8px);
+}
+.card h2{
+  margin:0 0 10px 0;
+  font-size:14px;
+  color:var(--muted);
+  font-weight:700;
+  letter-spacing:.02em;
+}
+.row{display:flex; gap:10px; flex-wrap:wrap; align-items:center}
+.btn{
+  display:inline-flex;
+  align-items:center;
+  justify-content:center;
+  gap:8px;
+  border:1px solid var(--border);
+  background: rgba(255,255,255,.06);
+  color:var(--text);
+  padding:10px 12px;
+  border-radius:12px;
+  cursor:pointer;
+  font-weight:650;
+  font-size:13px;
+}
+.btn.primary{
+  background: linear-gradient(135deg, rgba(124,92,255,.9), rgba(53,209,162,.85));
+  border-color: transparent;
+}
+.btn.danger{
+  background: rgba(255,77,109,.16);
+  border-color: rgba(255,77,109,.35);
+}
+.btn:disabled{
+  opacity:.55;
+  cursor:not-allowed;
+}
+.input{
+  border:1px solid var(--border);
+  background: rgba(255,255,255,.05);
+  color:var(--text);
+  padding:10px 12px;
+  border-radius:12px;
+  width:100%;
+}
+.small{
+  color:var(--muted);
+  font-size:12px;
+  line-height:1.35;
+}
+.kbd{
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+  font-size:11px;
+  padding:2px 6px;
+  border:1px solid var(--border);
+  border-radius:8px;
+  background: rgba(0,0,0,.25);
+}
+.hr{
+  height:1px;
+  background: var(--border);
+  margin:14px 0;
+}
+.fileList{
+  display:flex;
+  flex-direction:column;
+  gap:8px;
+  margin-top:10px;
+}
+.fileItem{
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:10px;
+  border:1px solid var(--border);
+  border-radius:14px;
+  padding:10px 12px;
+  background: rgba(0,0,0,.18);
+}
+.badge{
+  font-size:11px;
+  padding:3px 8px;
+  border-radius:999px;
+  border:1px solid var(--border);
+  color:var(--muted);
+}
+.canvasWrap{
+  overflow:auto;
+  border:1px solid var(--border);
+  border-radius:14px;
+  background: rgba(0,0,0,.2);
+  padding:12px;
+}
+canvas{display:block; margin:0 auto;}
+.toast{
+  margin-top:10px;
+  padding:10px 12px;
+  border-radius:14px;
+  border:1px solid var(--border);
+  background: rgba(0,0,0,.22);
+  color: var(--muted);
+  font-size:12px;
+}

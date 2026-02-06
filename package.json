@@ -1,7 +1,7 @@
 {
-  "name": "pdf-template-redactor",
+  "name": "pdf-redactor",
   "private": true,
-  "version": "4.2.0",
+  "version": "1.0.0",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -10,12 +10,16 @@
   },
   "dependencies": {
     "pdf-lib": "^1.17.1",
+    "pdfjs-dist": "^4.10.38",
+    "file-saver": "^2.0.5",
+    "jszip": "^3.10.1",
     "react": "^18.3.1",
-    "react-dom": "^18.3.1",
-    "jszip": "^3.10.1"
+    "react-dom": "^18.3.1"
   },
   "devDependencies": {
+    "@types/react": "^18.3.3",
+    "@types/react-dom": "^18.3.0",
     "@vitejs/plugin-react": "^4.3.1",
-    "vite": "^5.4.2"
+    "vite": "^5.4.8"
   }
 }

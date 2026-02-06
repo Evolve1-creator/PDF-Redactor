@@ -198,6 +198,7 @@ export default function App(){
           <div className="toast">
             <div style={{display:'flex', gap:8, alignItems:'center', flexWrap:'wrap'}}>
               <span className="kbd">Text-searchable</span>
+              <span className="kbd">Parser-friendly export</span>
               <span className="kbd">Rotation-aware</span>
               <span className="kbd">Page 1 only</span>
             </div>
@@ -211,7 +212,9 @@ export default function App(){
             <canvas ref={canvasRef} />
           </div>
           <div className="small" style={{marginTop:10}}>
-            Preview uses the same redaction output bytes that export writes to disk.
+            Preview uses the same redaction output bytes that export writes to disk.         In some environments, text parsers fail on PDFs saved with object streams/xref streams.
+        This build exports with <span className="kbd">useObjectStreams: false</span> and does not add a REDACTED label,
+        so your downstream “check for modifiers” text extraction should keep working.
             If your PDFs are rotated, this version still redacts the “top” area as the viewer sees it.
           </div>
         </div>

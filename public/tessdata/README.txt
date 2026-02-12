@@ -1,9 +1,8 @@
-Place OCR language data files here to avoid downloading them from a public CDN.
+Place OCR language files here to keep OCR fully client-side.
 
 Recommended:
-- eng.traineddata (or eng.traineddata.gz)
+- Download Tesseract language data: eng.traineddata (or eng.traineddata.gz)
+- Put it in this folder so it is served from your own domain:
+    /tessdata/eng.traineddata
 
-Tesseract.js will look for:
-  /tessdata/eng.traineddata
-
-If you do not provide the file, Tesseract.js may attempt to download language data.
+This avoids fetching language data from third-party CDNs.

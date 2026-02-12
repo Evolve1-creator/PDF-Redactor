@@ -3,6 +3,7 @@ import { saveAs } from 'file-saver'
 import JSZip from 'jszip'
 import { pdfjsLib } from './pdfjsWorker'
 import { redactPdfBytes, RedactionMode } from './redaction'
+import { redactPdfBytesSecureOcr, applyViewerRedactionsToCanvas } from './secureExport'
 
 function niceName(name){
   return (name || 'document.pdf').replace(/\.pdf$/i,'')
@@ -19,9 +20,36 @@ async function renderFirstPageToCanvas(bytes, canvas, scale = 1.25){
   await page.render({ canvasContext: ctx, viewport }).promise
 }
 
+async function renderFirstPageWithBurnInRedaction(bytes, canvas, mode, scale = 1.25){
+  const loadingTask = pdfjsLib.getDocument({ data: bytes })
+  const pdf = await loadingTask.promise
+  const page = await pdf.getPage(1)
+  const viewport = page.getViewport({ scale })
+  const ctx = canvas.getContext('2d')
+  canvas.width = Math.floor(viewport.width)
+  canvas.height = Math.floor(viewport.height)
+  await page.render({ canvasContext: ctx, viewport }).promise
+
+  // Burn-in preview (viewer coordinates)
+  applyViewerRedactionsToCanvas({
+    ctx,
+    canvasWidth: canvas.width,
+    canvasHeight: canvas.height,
+    mode,
+    scale,
+    surgeryTopCm: 4,
+  })
+}
+
+const ExportStyle = {
+  OVERLAY_SEARCHABLE: 'overlay_searchable',
+  HIPAA_BURNIN_OCR: 'hipaa_burnin_ocr',
+}
+
 export default function App(){
   const [files, setFiles] = useState([])
   const [mode, setMode] = useState(RedactionMode.SURGERY_CENTER)
+  const [exportStyle, setExportStyle] = useState(ExportStyle.HIPAA_BURNIN_OCR)
   const [busy, setBusy] = useState(false)
   const [status, setStatus] = useState('Upload one or more PDFs to preview and export a text-searchable redacted PDF.')
   const [sourceBytes, setSourceBytes] = useState(null)
@@ -46,14 +74,20 @@ export default function App(){
     ev.target.value = ''
   }
 
-  // Build preview bytes *with redaction applied* whenever file or mode changes.
+  // Build preview bytes *with overlay redaction applied* whenever file or mode changes.
   useEffect(() => {
     let cancelled = false
     ;(async () => {
       if (!sourceBytes) return
       try{
-        const out = await redactPdfBytes(sourceBytes, mode, { onlyFirstPage: true })
-        if (!cancelled) setPreviewBytes(new Uint8Array(out))
+        if (exportStyle === ExportStyle.OVERLAY_SEARCHABLE){
+          const out = await redactPdfBytes(sourceBytes, mode, { onlyFirstPage: true })
+          if (!cancelled) setPreviewBytes(new Uint8Array(out))
+        } else {
+          // HIPAA burn-in preview uses the original bytes + canvas redaction,
+          // so we don't need to build previewBytes.
+          if (!cancelled) setPreviewBytes(sourceBytes)
+        }
       }catch(err){
         if (!cancelled) {
           setPreviewBytes(sourceBytes) // fallback to original
@@ -62,7 +96,7 @@ export default function App(){
       }
     })()
     return () => { cancelled = true }
-  }, [sourceBytes, mode])
+  }, [sourceBytes, mode, exportStyle])
 
   // Render preview to canvas whenever preview bytes update
   useEffect(() => {
@@ -70,14 +104,18 @@ export default function App(){
     ;(async () => {
       if (!previewBytes || !canvasRef.current) return
       try{
-        await renderFirstPageToCanvas(previewBytes, canvasRef.current, 1.25)
+        if (exportStyle === ExportStyle.OVERLAY_SEARCHABLE){
+          await renderFirstPageToCanvas(previewBytes, canvasRef.current, 1.25)
+        } else {
+          await renderFirstPageWithBurnInRedaction(previewBytes, canvasRef.current, mode, 1.25)
+        }
         if (!cancelled) setStatus(prev => prev)
       }catch(err){
         if (!cancelled) setStatus(`Preview render error: ${err?.message || String(err)}`)
       }
     })()
     return () => { cancelled = true }
-  }, [previewBytes])
+  }, [previewBytes, mode, exportStyle])
 
   const exportSingle = async () => {
     if (!files[0]) return
@@ -85,10 +123,12 @@ export default function App(){
     try{
       const f = files[0]
       const inputBytes = new Uint8Array(await f.arrayBuffer())
-      const out = await redactPdfBytes(inputBytes, mode, { onlyFirstPage: true })
+      const out = exportStyle === ExportStyle.HIPAA_BURNIN_OCR
+        ? await redactPdfBytesSecureOcr(inputBytes, mode, { onlyFirstPage: true, ocr: true })
+        : await redactPdfBytes(inputBytes, mode, { onlyFirstPage: true })
       const blob = new Blob([out], { type: 'application/pdf' })
       saveAs(blob, `${niceName(f.name)}__redacted.pdf`)
-      setStatus(`Exported: ${niceName(f.name)}__redacted.pdf (text-searchable)`)
+      setStatus(`Exported: ${niceName(f.name)}__redacted.pdf (${exportStyle === ExportStyle.HIPAA_BURNIN_OCR ? 'HIPAA burn-in + OCR searchable' : 'overlay searchable'})`)
     } catch (err){
       setStatus(`Export error: ${err?.message || String(err)}`)
     } finally {
@@ -103,12 +143,14 @@ export default function App(){
       const zip = new JSZip()
       for (const f of files){
         const inputBytes = new Uint8Array(await f.arrayBuffer())
-        const out = await redactPdfBytes(inputBytes, mode, { onlyFirstPage: true })
+        const out = exportStyle === ExportStyle.HIPAA_BURNIN_OCR
+          ? await redactPdfBytesSecureOcr(inputBytes, mode, { onlyFirstPage: true, ocr: true })
+          : await redactPdfBytes(inputBytes, mode, { onlyFirstPage: true })
         zip.file(`${niceName(f.name)}__redacted.pdf`, out)
       }
       const blob = await zip.generateAsync({ type: 'blob' })
       saveAs(blob, `redacted_pdfs_${new Date().toISOString().slice(0,10)}.zip`)
-      setStatus(`Batch export complete: ${files.length} PDFs in a ZIP (outputs are text-searchable).`)
+      setStatus(`Batch export complete: ${files.length} PDFs in a ZIP (${exportStyle === ExportStyle.HIPAA_BURNIN_OCR ? 'HIPAA burn-in + OCR searchable' : 'overlay searchable'}).`)
     } catch (err){
       setStatus(`Batch export error: ${err?.message || String(err)}`)
     } finally {
@@ -170,6 +212,30 @@ export default function App(){
 
           <div className="hr" />
 
+          <h2>2b) Export Security</h2>
+          <div className="small" style={{marginTop:6}}>
+            <b>HIPAA burn-in + OCR</b> removes underlying content (secure) and re-adds a searchable text layer via local OCR.
+            Overlay mode preserves original text (searchable) but is <b>NOT</b> true redaction.
+          </div>
+          <div className="row" style={{marginTop:10}}>
+            <button
+              className={"btn " + (exportStyle === ExportStyle.HIPAA_BURNIN_OCR ? "primary" : "")}
+              onClick={() => setExportStyle(ExportStyle.HIPAA_BURNIN_OCR)}
+              disabled={busy}
+              title="HIPAA-secure: burn-in redaction + OCR text layer (client-side)"
+            >
+              HIPAA Burn-in + OCR (Searchable)
+            </button>
+            <button
+              className={"btn " + (exportStyle === ExportStyle.OVERLAY_SEARCHABLE ? "primary" : "")}
+              onClick={() => setExportStyle(ExportStyle.OVERLAY_SEARCHABLE)}
+              disabled={busy}
+              title="NOT HIPAA-secure: draws rectangles on top of original text"
+            >
+              Overlay Only (Searchable, Not HIPAA)
+            </button>
+          </div>
+
           <h2>3) Export</h2>
           <div className="row">
             <button className="btn primary" onClick={exportSingle} disabled={!canExport}>
@@ -198,7 +264,7 @@ export default function App(){
           <div className="toast">
             <div style={{display:'flex', gap:8, alignItems:'center', flexWrap:'wrap'}}>
               <span className="kbd">Text-searchable</span>
-              <span className="kbd">Parser-friendly export</span>
+              <span className="kbd">HIPAA option</span>
               <span className="kbd">Rotation-aware</span>
               <span className="kbd">Page 1 only</span>
             </div>

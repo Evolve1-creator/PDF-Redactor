@@ -25,6 +25,7 @@ async function renderFirstPageWithBurnInRedaction(bytes, canvas, mode, scale = 1
   const pdf = await loadingTask.promise
   const page = await pdf.getPage(1)
   const viewport = page.getViewport({ scale })
+  const vpPt = page.getViewport({ scale: 1 })
   const ctx = canvas.getContext('2d')
   canvas.width = Math.floor(viewport.width)
   canvas.height = Math.floor(viewport.height)
@@ -36,7 +37,8 @@ async function renderFirstPageWithBurnInRedaction(bytes, canvas, mode, scale = 1
     canvasWidth: canvas.width,
     canvasHeight: canvas.height,
     mode,
-    scale,
+    pageWidthPt: vpPt.width,
+    pageHeightPt: vpPt.height,
     surgeryTopCm: 4,
   })
 }

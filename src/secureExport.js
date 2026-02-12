@@ -2,7 +2,21 @@ import { PDFDocument, rgb } from 'pdf-lib'
 import { pdfjsLib } from './pdfjsWorker'
 
 // --- Geometry helpers
-const cmToPt = (cm) => cm * 28.346456692913385
+// IMPORTANT:
+// Do NOT assume a fixed pixel-per-point mapping.
+// PDF.js viewport dimensions are in rendered units (CSS pixels) and may incorporate
+// internal conversions. If we convert cm->pt->px directly, redaction bands can land
+// at the wrong size. Instead, compute cm as a fraction of the PDF page size (in points)
+// and apply that fraction to the rendered canvas dimensions.
+
+const ptToCm = (pt) => (pt / 72) * 2.54
+
+function cmToCanvasPx(cm, pageSizePt, canvasSizePx) {
+  const pageSizeCm = ptToCm(pageSizePt)
+  if (!pageSizeCm || !isFinite(pageSizeCm) || pageSizeCm <= 0) return 0
+  const frac = cm / pageSizeCm
+  return Math.max(0, frac * canvasSizePx)
+}
 
 /**
  * Draw redactions onto a rendered canvas (burn-in) in VIEWER coordinates.
@@ -13,24 +27,25 @@ export function applyViewerRedactionsToCanvas({
   canvasWidth,
   canvasHeight,
   mode,
-  scale,
+  pageWidthPt,
+  pageHeightPt,
   surgeryTopCm = 4,
 }) {
   ctx.save()
   ctx.fillStyle = '#000'
 
   if (mode === 'surgery_center') {
-    const hPx = cmToPt(surgeryTopCm) * scale
+    const hPx = cmToCanvasPx(surgeryTopCm, pageHeightPt, canvasHeight)
     ctx.fillRect(0, 0, canvasWidth, Math.min(canvasHeight, hPx))
   }
 
   if (mode === 'no_charge') {
     // Example layout: top header band + top-left box beneath it.
-    const headerHPx = cmToPt(3.2) * scale
+    const headerHPx = cmToCanvasPx(3.2, pageHeightPt, canvasHeight)
     ctx.fillRect(0, 0, canvasWidth, Math.min(canvasHeight, headerHPx))
 
-    const boxWPx = Math.min(canvasWidth * 0.55, cmToPt(12) * scale)
-    const boxHPx = cmToPt(3.0) * scale
+    const boxWPx = Math.min(canvasWidth * 0.55, cmToCanvasPx(12, pageWidthPt, canvasWidth))
+    const boxHPx = cmToCanvasPx(3.0, pageHeightPt, canvasHeight)
     ctx.fillRect(0, headerHPx, boxWPx, boxHPx)
   }
 
@@ -118,7 +133,8 @@ export async function redactPdfBytesSecureOcr(inputBytes, mode, opts = {}) {
       canvasWidth: canvas.width,
       canvasHeight: canvas.height,
       mode,
-      scale: cfg.renderScale,
+      pageWidthPt: vpPt.width,
+      pageHeightPt: vpPt.height,
       surgeryTopCm: cfg.surgeryTopCm,
     })
 

@@ -2,7 +2,7 @@ import React, { useEffect, useRef, useState } from 'react'
 import { saveAs } from 'file-saver'
 import JSZip from 'jszip'
 import { pdfjsLib } from './pdfjsWorker'
-import { redactPdfBytes, RedactionMode, computeRedactionRects, normalizePdfBytes } from './redaction'
+import { redactPdfBytesWithText, convertAnyToArtifacts, RedactionMode, computeRedactionRects, normalizePdfBytes } from './redaction'
 
 function niceName(name){
   return (name || 'document.pdf').replace(/\.pdf$/i,'')
@@ -36,16 +36,25 @@ function drawPreviewRects(ctx, rects){
   ctx.restore()
 }
 
-async function preflightLooksLikePdf(file){
-  // We only read a small slice for fast validation & helpful error messaging.
-  // Full parsing still happens during export.
+async function preflightAny(file){
+  // Quick sniff of bytes so we can accept "not real PDFs" and still export a GPT-readable artifact.
   const SLICE = 2 * 1024 * 1024
   const head = new Uint8Array(await file.slice(0, SLICE).arrayBuffer())
+  // We'll mark as ok if it's a real PDF OR it looks like an image OR it looks like HTML/text wrapper.
+  // Full conversion happens during export.
   try{
     normalizePdfBytes(head)
-    return { ok: true, err: '' }
+    return { ok: true, note: 'pdf', err: '' }
   }catch(e){
-    return { ok: false, err: e?.message || String(e) }
+    const msg = e?.message || String(e)
+    const ascii = String.fromCharCode(...head.slice(0, Math.min(48, head.length))).toLowerCase()
+    const isHtml = ascii.includes('<html') || ascii.includes('<!doctype') || ascii.includes('<head')
+    const isPng = head.length >= 8 && head[0] === 0x89 && head[1] === 0x50 && head[2] === 0x4e && head[3] === 0x47
+    const isJpg = head.length >= 3 && head[0] === 0xff && head[1] === 0xd8 && head[2] === 0xff
+    if (isPng || isJpg) return { ok: true, note: isPng ? 'png' : 'jpeg', err: '' }
+    if (isHtml) return { ok: true, note: 'html-wrapper', err: '' }
+    // Still allow as "text-ish" so we can export a best-effort scrubbed TXT.
+    return { ok: true, note: 'text', err: msg }
   }
 }
 
@@ -91,30 +100,29 @@ export default function App(){
     // 2) give clear feedback (HTML masquerading as PDF, missing %PDF-, etc.)
     const items = []
     for (const f of picked){
-      const pf = await preflightLooksLikePdf(f)
-      items.push({ file: f, ok: pf.ok, err: pf.err })
+      const pf = await preflightAny(f)
+      items.push({ file: f, ok: pf.ok, note: pf.note, err: pf.err })
     }
     setFileItems(items)
 
-    const firstValid = items.find(x => x.ok)
-    if (!firstValid){
+    // Preview only works for true PDFs (we render page 1 via PDF.js). If the first upload isn't a PDF,
+    // we still allow export, but we skip preview.
+    const firstPdf = items.find(x => x.note === 'pdf')
+    if (firstPdf){
+      try{
+        const raw = new Uint8Array(await firstPdf.file.arrayBuffer())
+        const bytes = normalizePdfBytes(raw, { maxScanBytes: Math.min(raw.length, 16 * 1024 * 1024) })
+        setSourceBytes(bytes)
+        const noteCounts = items.reduce((acc,it)=>{acc[it.note]= (acc[it.note]||0)+1; return acc}, {})
+        setStatus(`Loaded ${items.length} file(s). Previewing: ${firstPdf.file.name}. Types: ${Object.entries(noteCounts).map(([k,v])=>`${k}:${v}`).join(', ')}`)
+      } catch (err){
+        setSourceBytes(null)
+        setStatus(`Preview skipped (could not render ${firstPdf.file.name}). You can still export: ${err?.message || String(err)}`)
+      }
+    } else {
       setSourceBytes(null)
-      const first = items[0]
-      setStatus(`No valid PDFs detected. Example: ${first?.file?.name || 'file'} → ${first?.err || 'unknown error'}`)
-      ev.target.value = ''
-      return
-    }
-
-    try{
-      const raw = new Uint8Array(await firstValid.file.arrayBuffer())
-      // Normalize for preview so PDF.js is less likely to choke on leading junk bytes.
-      const bytes = normalizePdfBytes(raw, { maxScanBytes: Math.min(raw.length, 16 * 1024 * 1024) })
-      setSourceBytes(bytes)
-      const invalidCount = items.filter(x => !x.ok).length
-      setStatus(`Loaded ${items.length} file(s) (${invalidCount} invalid). Previewing: ${firstValid.file.name}`)
-    } catch (err){
-      setSourceBytes(null)
-      setStatus(`File error for ${firstValid.file.name}: ${err?.message || String(err)}`)
+      const noteCounts = items.reduce((acc,it)=>{acc[it.note]= (acc[it.note]||0)+1; return acc}, {})
+      setStatus(`Loaded ${items.length} file(s). No preview available (no true PDFs detected). You can still export. Types: ${Object.entries(noteCounts).map(([k,v])=>`${k}:${v}`).join(', ')}`)
     }
     ev.target.value = ''
   }
@@ -151,10 +159,28 @@ export default function App(){
     try{
       const f = first.file
       const inputBytes = new Uint8Array(await f.arrayBuffer())
-      const out = await redactPdfBytes(inputBytes, mode, { applyAllPages, includeOcr })
-      const blob = new Blob([out], { type: 'application/pdf' })
-      saveAs(blob, `${niceName(f.name)}__redacted.pdf`)
-      setStatus(`Exported: ${niceName(f.name)}__redacted.pdf (${includeOcr ? 'searchable (OCR)' : 'not searchable'})`)
+      const art = await convertAnyToArtifacts(inputBytes, mode, { applyAllPages, includeOcr })
+
+      // If we have both PDF and text, download a small ZIP so nothing is lost.
+      if (art.pdfBytes && art.gptText){
+        const zip = new JSZip()
+        zip.file(`${niceName(f.name)}__redacted.pdf`, art.pdfBytes, { binary: true })
+        zip.file(`${niceName(f.name)}__gpt.txt`, art.gptText)
+        if (art.warnings?.length) zip.file(`${niceName(f.name)}__warnings.txt`, art.warnings.join('\n'))
+        const blob = await zip.generateAsync({ type: 'blob' })
+        saveAs(blob, `${niceName(f.name)}__redacted_and_text.zip`)
+        setStatus(`Exported ZIP: ${niceName(f.name)}__redacted_and_text.zip (includes searchable PDF + GPT text)`)
+      } else if (art.pdfBytes){
+        const blob = new Blob([art.pdfBytes], { type: 'application/pdf' })
+        saveAs(blob, `${niceName(f.name)}__redacted.pdf`)
+        setStatus(`Exported: ${niceName(f.name)}__redacted.pdf (${includeOcr ? 'searchable (OCR)' : 'not searchable'})`)
+      } else if (art.gptText){
+        const blob = new Blob([art.gptText], { type: 'text/plain;charset=utf-8' })
+        saveAs(blob, `${niceName(f.name)}__gpt.txt`)
+        setStatus(`Exported: ${niceName(f.name)}__gpt.txt (best-effort text output)`)
+      } else {
+        throw new Error('Nothing exportable was produced for this file.')
+      }
     } catch (err){
       setStatus(`Export error: ${err?.message || String(err)}`)
     } finally {
@@ -169,17 +195,17 @@ export default function App(){
       const zip = new JSZip()
       const failures = []
 
-      // Record invalid files immediately (these never enter the redaction pipeline)
-      for (const it of fileItems.filter(x => !x.ok)){
-        failures.push({ name: it.file.name, msg: it.err || 'Not a valid PDF.' })
-      }
-
       for (const it of validItems){
         const f = it.file
         try{
           const inputBytes = new Uint8Array(await f.arrayBuffer())
-          const out = await redactPdfBytes(inputBytes, mode, { applyAllPages, includeOcr })
-          zip.file(`${niceName(f.name)}__redacted.pdf`, out, { binary: true })
+          const art = await convertAnyToArtifacts(inputBytes, mode, { applyAllPages, includeOcr })
+          if (art.pdfBytes) zip.file(`${niceName(f.name)}__redacted.pdf`, art.pdfBytes, { binary: true })
+          if (art.gptText) zip.file(`${niceName(f.name)}__gpt.txt`, art.gptText)
+          if (art.warnings?.length) zip.file(`${niceName(f.name)}__warnings.txt`, art.warnings.join('\n'))
+          if (!art.pdfBytes && !art.gptText){
+            failures.push({ name: f.name, msg: 'No exportable artifact produced.' })
+          }
         } catch (err){
           failures.push({ name: f.name, msg: err?.message || String(err) })
         }
@@ -195,9 +221,9 @@ export default function App(){
 
       if (failures.length){
         const shown = failures.slice(0, 3).map(f => `${f.name}: ${f.msg}`).join(' | ')
-        setStatus(`Batch export complete: ${Object.keys(zip.files).length}/${fileItems.length} PDFs exported (${includeOcr ? 'searchable (OCR)' : 'not searchable'}). Skipped ${failures.length} file(s): ${shown}${failures.length > 3 ? ' …' : ''}`)
+        setStatus(`Batch export complete: created ${Object.keys(zip.files).length} artifact(s) in the ZIP. ${failures.length} file(s) had issues: ${shown}${failures.length > 3 ? ' …' : ''}`)
       } else {
-        setStatus(`Batch export complete: ${Object.keys(zip.files).length} PDFs in a ZIP (${includeOcr ? 'searchable (OCR)' : 'not searchable'}).`)
+        setStatus(`Batch export complete: ${Object.keys(zip.files).length} artifact(s) in the ZIP.`)
       }
     } catch (err){
       setStatus(`Batch export error: ${err?.message || String(err)}`)
@@ -226,8 +252,16 @@ export default function App(){
 
       <div className="grid">
         <div className="card">
-          <h2>1) Upload PDFs</h2>
-          <input className="input" type="file" accept="application/pdf,.pdf" multiple onChange={onPick} />
+          <h2>1) Upload files</h2>
+          <input
+            className="input"
+            type="file"
+            // Accept true PDFs, image-only PDFs, and common image formats.
+            // Also allow text/HTML wrappers so we can export a GPT-readable TXT fallback.
+            accept="application/pdf,.pdf,image/*,text/plain,text/html,.htm,.html"
+            multiple
+            onChange={onPick}
+          />
           <div className="small" style={{marginTop:10}}>
             Preview shows the same burn‑in redaction zones (preview skips OCR to stay fast).
           </div>

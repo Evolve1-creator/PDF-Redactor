@@ -1,6 +1,13 @@
 import { PDFDocument, rgb, StandardFonts } from 'pdf-lib'
 import { pdfjsLib } from './pdfjsWorker'
-import Tesseract from 'tesseract.js'
+import { createWorker } from 'tesseract.js'
+
+// Local URLs for Tesseract worker & core (Vite will emit these files).
+// This avoids relying on a third-party CDN, which is often blocked and will make OCR "appear" to run
+// but produce non-searchable output.
+import tesseractWorkerPath from 'tesseract.js/dist/worker.min.js?url'
+import tesseractCorePath from 'tesseract.js-core/tesseract-core.wasm.js?url'
+import tesseractWasmPath from 'tesseract.js-core/tesseract-core.wasm?url'
 
 /**
  * HIPAA-safe (true) redaction + searchable output, fully client-side.
@@ -91,7 +98,13 @@ async function assertOcrAssetsPresent(){
   ]
   for (const url of candidates){
     try{
-      const res = await fetch(url, { method: 'HEAD', cache: 'no-store' })
+      // Some hosts (and some CDNs) do not support HEAD properly.
+      // Use a tiny GET with a Range header to prove the file is reachable.
+      const res = await fetch(url, {
+        method: 'GET',
+        headers: { 'Range': 'bytes=0-15' },
+        cache: 'no-store'
+      })
       if (res.ok) return url
     }catch{}
   }
@@ -264,7 +277,11 @@ export async function redactPdfBytes(inputBytes, mode, opts = {}) {
     // Make missing OCR assets an explicit, actionable error.
     ocrModelUrl = await assertOcrAssetsPresent()
 
-    worker = await Tesseract.createWorker({
+    worker = await createWorker({
+      // Pin worker/core to local bundled assets.
+      workerPath: tesseractWorkerPath,
+      corePath: tesseractCorePath,
+      wasmPath: tesseractWasmPath,
       langPath: '/tessdata',
       logger: () => {},
     })
@@ -334,4 +351,263 @@ export async function redactPdfBytes(inputBytes, mode, opts = {}) {
   }
 
   return await outPdf.save({ useObjectStreams: false })
+}
+
+// Same as redactPdfBytes but also returns OCR/extracted text.
+// This is used so we can always place a GPT-readable text file into the ZIP even if
+// a PDF viewer doesn't index the invisible text layer as expected.
+export async function redactPdfBytesWithText(inputBytes, mode, opts = {}) {
+  inputBytes = normalizePdfBytes(inputBytes)
+
+  const cfg = {
+    applyAllPages: mode === RedactionMode.NO_CHARGE,
+    includeOcr: true,
+    renderScale: 2.0,
+    surgeryTopCm: 4,
+    alsoRedactFooter: true,
+    ...opts
+  }
+
+  const loadingTask = pdfjsLib.getDocument({ data: inputBytes })
+  const pdf = await loadingTask.promise
+  const pageCount = pdf.numPages
+  const pageSizes = await getPdfLibPageSizes(inputBytes)
+
+  let worker = null
+  let ocrModelUrl = null
+  if (cfg.includeOcr){
+    ocrModelUrl = await assertOcrAssetsPresent()
+    worker = await createWorker({
+      workerPath: tesseractWorkerPath,
+      corePath: tesseractCorePath,
+      wasmPath: tesseractWasmPath,
+      langPath: '/tessdata',
+      logger: () => {},
+    })
+    await worker.loadLanguage('eng')
+    await worker.initialize('eng')
+  }
+
+  const outPdf = await PDFDocument.create()
+  const font = await outPdf.embedFont(StandardFonts.Helvetica)
+
+  let ocrTotalChars = 0
+  const texts = []
+
+  for (let i = 0; i < pageCount; i++){
+    const pdfjsPage = await pdf.getPage(i + 1)
+    const { canvas, ctx } = await renderPageToCanvas(pdfjsPage, cfg.renderScale)
+
+    const sizePtForRects = pageSizes[i] || pageSizes[0]
+    const rects = computeRedactionRects(mode, i, canvas.width, canvas.height, sizePtForRects, cfg)
+    applyRedactionsToCanvas(ctx, rects)
+
+    const pngBytes = await canvasToPngBytes(canvas)
+    const png = await outPdf.embedPng(pngBytes)
+    const outSizePt = pageSizes[i] || { width: png.width, height: png.height }
+    const page = outPdf.addPage([outSizePt.width, outSizePt.height])
+    page.drawImage(png, { x: 0, y: 0, width: outSizePt.width, height: outSizePt.height })
+
+    if (cfg.includeOcr){
+      let text = ''
+      try{
+        const dataUrl = canvas.toDataURL('image/png')
+        const result = await worker.recognize(dataUrl)
+        text = (result?.data?.text || '').trim()
+      }catch(e){
+        const msg = String(e?.message || e)
+        throw new Error(`OCR failed on page ${i + 1}. ${msg} (OCR model expected at ${ocrModelUrl || '/tessdata/eng.traineddata'}).`)
+      }
+      if (text){
+        ocrTotalChars += text.length
+        texts.push(`--- Page ${i + 1} ---\n${text}`)
+        await addInvisibleTextLayer(page, font, text)
+      } else {
+        texts.push(`--- Page ${i + 1} ---\n`)
+      }
+    }
+  }
+
+  try{ await worker?.terminate() }catch{}
+
+  if (cfg.includeOcr && ocrTotalChars === 0){
+    throw new Error(
+      'OCR completed but produced 0 extractable characters, so the output is NOT searchable. ' +
+      'Common causes: missing /public/tessdata/eng.traineddata (or .gz), blocked fetch for tessdata, or OCR failing silently.'
+    )
+  }
+
+  const pdfBytes = await outPdf.save({ useObjectStreams: false })
+  const gptText = texts.join('\n\n').trim()
+  return { pdfBytes, gptText }
+}
+
+// -----------------------------
+// "ANY FILE" INPUT SUPPORT
+// -----------------------------
+
+function bytesStartWith(bytes, sig){
+  if (!bytes || bytes.length < sig.length) return false
+  for (let i = 0; i < sig.length; i++) if (bytes[i] !== sig[i]) return false
+  return true
+}
+
+function sniffKind(bytes){
+  if (!bytes || bytes.length < 4) return 'unknown'
+  // PDF
+  if (bytesStartWith(bytes, [0x25,0x50,0x44,0x46,0x2d])) return 'pdf'
+  // PNG
+  if (bytesStartWith(bytes, [0x89,0x50,0x4e,0x47,0x0d,0x0a,0x1a,0x0a])) return 'png'
+  // JPEG
+  if (bytesStartWith(bytes, [0xff,0xd8,0xff])) return 'jpeg'
+  // HTML-ish
+  const headAscii = String.fromCharCode(...bytes.slice(0, Math.min(64, bytes.length))).toLowerCase()
+  if (headAscii.includes('<!doctype html') || headAscii.includes('<html') || headAscii.includes('<head')) return 'html'
+  return 'unknown'
+}
+
+function base64ToBytes(b64){
+  // Remove whitespace/newlines
+  const clean = b64.replace(/[\r\n\t\s]/g,'')
+  const bin = atob(clean)
+  const out = new Uint8Array(bin.length)
+  for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i)
+  return out
+}
+
+export function tryExtractEmbeddedPdfBytes(wrapperBytes){
+  // Many portals download an HTML wrapper that embeds the PDF as base64.
+  // We look for either data:application/pdf;base64,... or a raw JVBERi0... blob.
+  try{
+    const text = new TextDecoder('utf-8', { fatal: false }).decode(wrapperBytes)
+    const m1 = text.match(/data:application\/pdf;base64,([A-Za-z0-9+\/=_-]+)/)
+    if (m1?.[1]) return normalizePdfBytes(base64ToBytes(m1[1]))
+    const idx = text.indexOf('JVBERi0')
+    if (idx !== -1){
+      // Expand until a non-base64 char (very heuristic but works for common wrappers)
+      let end = idx
+      while (end < text.length && /[A-Za-z0-9+\/=_-]/.test(text[end])) end++
+      const b64 = text.slice(idx, end)
+      if (b64.length > 1000) return normalizePdfBytes(base64ToBytes(b64))
+    }
+  }catch{}
+  return null
+}
+
+function scrubTextBestEffort(raw){
+  // BEST-EFFORT scrub for non-renderable inputs. This is NOT as reliable as burn-in.
+  // Remove common header lines and identifiers.
+  const lines = raw.split(/\r?\n/)
+  const out = []
+  for (const line of lines){
+    const l = line.trim()
+    if (!l) continue
+    if (/\b(name|patient name|dob|date of birth|mrn|acct|account|address|phone|ssn)\b\s*[:#]/i.test(l)) continue
+    if (/\bprinted by\b/i.test(l)) continue
+    if (/\b(\d{2}\/\d{2}\/\d{4})\b/.test(l) && /\b(dob|date of birth)\b/i.test(l)) continue
+    out.push(line)
+  }
+  return out.join('\n')
+}
+
+async function redactCanvasToPdfAndText(canvas, mode, pageIndex, pageSizePt, cfg, worker, outPdf, font){
+  const ctx = canvas.getContext('2d', { alpha: false })
+  const rects = computeRedactionRects(mode, pageIndex, canvas.width, canvas.height, pageSizePt, cfg)
+  applyRedactionsToCanvas(ctx, rects)
+  const pngBytes = await canvasToPngBytes(canvas)
+  const png = await outPdf.embedPng(pngBytes)
+  const outSizePt = pageSizePt || { width: png.width, height: png.height }
+  const page = outPdf.addPage([outSizePt.width, outSizePt.height])
+  page.drawImage(png, { x: 0, y: 0, width: outSizePt.width, height: outSizePt.height })
+
+  let text = ''
+  if (cfg.includeOcr && worker){
+    const dataUrl = canvas.toDataURL('image/png')
+    const result = await worker.recognize(dataUrl)
+    text = (result?.data?.text || '').trim()
+    if (text) await addInvisibleTextLayer(page, font, text)
+  }
+  return text
+}
+
+export async function convertAnyToArtifacts(inputBytes, mode, opts = {}){
+  // Returns:
+  // - pdfBytes: searchable PDF when possible
+  // - gptText: OCR/extracted text (best-effort)
+  // - warnings: array of strings
+  const warnings = []
+  const cfg = {
+    applyAllPages: mode === RedactionMode.NO_CHARGE,
+    includeOcr: true,
+    renderScale: 2.5,
+    surgeryTopCm: 4,
+    alsoRedactFooter: true,
+    ...opts
+  }
+
+  // 1) Try as real PDF
+  let asPdfBytes = null
+  try{ asPdfBytes = normalizePdfBytes(inputBytes) }catch{}
+  if (!asPdfBytes){
+    // 2) Try embedded/base64 PDF wrapper
+    const embedded = tryExtractEmbeddedPdfBytes(inputBytes)
+    if (embedded) asPdfBytes = embedded
+  }
+
+  if (asPdfBytes){
+    // Standard pipeline: burn-in + OCR text layer
+    const { pdfBytes, gptText } = await redactPdfBytesWithText(asPdfBytes, mode, cfg)
+    return { pdfBytes, gptText: gptText || '', warnings }
+  }
+
+  // 3) Try as image
+  const kind = sniffKind(inputBytes)
+  if (kind === 'png' || kind === 'jpeg'){
+    if (!cfg.includeOcr) warnings.push('Image input processed without OCR: output will not be searchable.')
+
+    // OCR worker
+    let worker = null
+    if (cfg.includeOcr){
+      await assertOcrAssetsPresent()
+      worker = await createWorker({
+        workerPath: tesseractWorkerPath,
+        corePath: tesseractCorePath,
+        wasmPath: tesseractWasmPath,
+        langPath: '/tessdata',
+        logger: () => {},
+      })
+      await worker.loadLanguage('eng')
+      await worker.initialize('eng')
+    }
+
+    const outPdf = await PDFDocument.create()
+    const font = await outPdf.embedFont(StandardFonts.Helvetica)
+
+    const blob = new Blob([inputBytes], { type: kind === 'png' ? 'image/png' : 'image/jpeg' })
+    const bitmap = await createImageBitmap(blob)
+    const canvas = document.createElement('canvas')
+    canvas.width = Math.ceil(bitmap.width * (cfg.renderScale || 2.0))
+    canvas.height = Math.ceil(bitmap.height * (cfg.renderScale || 2.0))
+    const ctx = canvas.getContext('2d', { alpha: false })
+    ctx.drawImage(bitmap, 0, 0, canvas.width, canvas.height)
+
+    // Use 1px = 1pt for simplicity; this is fine for GPT readability.
+    const pageSizePt = { width: canvas.width, height: canvas.height }
+    const ocrText = await redactCanvasToPdfAndText(canvas, mode, 0, pageSizePt, cfg, worker, outPdf, font)
+    try{ await worker?.terminate() }catch{}
+
+    const pdfBytes = await outPdf.save({ useObjectStreams: false })
+    return { pdfBytes, gptText: ocrText || '', warnings }
+  }
+
+  // 4) Fallback: treat as text-ish and export GPT-readable text
+  try{
+    const raw = new TextDecoder('utf-8', { fatal: false }).decode(inputBytes)
+    const scrubbed = scrubTextBestEffort(raw)
+    warnings.push('Input was not a renderable PDF/image. Exporting best-effort scrubbed text for GPT readability; verify PHI removal manually.')
+    return { pdfBytes: null, gptText: scrubbed, warnings }
+  }catch{
+    warnings.push('Unknown file type: could not extract text or render. Skipped.')
+    return { pdfBytes: null, gptText: '', warnings }
+  }
 }

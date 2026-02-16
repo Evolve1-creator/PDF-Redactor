@@ -37,6 +37,48 @@ const TEMPLATE = {
   footerFrac: 0.036          // ~0.032–0.037 in sample
 }
 
+/**
+ * Normalize bytes that are supposed to be a PDF.
+ *
+ * Why this exists:
+ * - Some systems save files with a .pdf extension that are actually HTML error pages.
+ * - Some gateways prepend junk bytes before the %PDF header.
+ * - Batch exports should skip/bail with a *clear* error instead of a generic PDF.js parse failure.
+ */
+export function normalizePdfBytes(bytes, { maxScanBytes = 2 * 1024 * 1024 } = {}){
+  if (!bytes || bytes.length < 5) throw new Error('File is empty or too small to be a PDF.')
+
+  // Detect HTML masquerading as PDF
+  const headAscii = String.fromCharCode(...bytes.slice(0, Math.min(64, bytes.length))).toLowerCase()
+  if (headAscii.includes('<!doctype html') || headAscii.includes('<html') || headAscii.includes('<head')){
+    throw new Error('This file looks like an HTML page, not a PDF (common when a download is blocked or requires login). Re-download the document as a true PDF.')
+  }
+
+  const needle = [0x25, 0x50, 0x44, 0x46, 0x2D] // "%PDF-"
+  const scanLen = Math.min(maxScanBytes, bytes.length)
+  let headerAt = -1
+  for (let i = 0; i <= scanLen - needle.length; i++){
+    let ok = true
+    for (let j = 0; j < needle.length; j++){
+      if (bytes[i + j] !== needle[j]) { ok = false; break }
+    }
+    if (ok) { headerAt = i; break }
+  }
+  if (headerAt === -1){
+    throw new Error('Input is not a valid PDF (missing %PDF header).')
+  }
+
+  const out = headerAt === 0 ? bytes : bytes.slice(headerAt)
+
+  // Basic version sanity check: "%PDF-1.x"
+  const v = String.fromCharCode(...out.slice(0, Math.min(12, out.length)))
+  if (!/^%PDF-\d\.\d/.test(v)){
+    // If we matched a false-positive %PDF- inside the file, this helps explain the failure.
+    throw new Error('Found a %PDF marker, but the file does not appear to be a valid PDF header. The file may be corrupted or not actually a PDF.')
+  }
+  return out
+}
+
 function clamp(n, min, max){
   return Math.max(min, Math.min(max, n))
 }
@@ -147,26 +189,9 @@ async function addInvisibleTextLayer(pdfLibPage, font, text){
  * - alsoRedactFooter: boolean (default true; for SURGERY_CENTER)
  */
 export async function redactPdfBytes(inputBytes, mode, opts = {}) {
-  // Some files labeled ".pdf" may include leading bytes before the %PDF header
-  // (BOM, proxy banners, etc.). PDF.js will throw "No PDF header found".
-  // The PDF spec allows the header to appear within the first 1024 bytes.
-  // Normalize by trimming everything before the first "%PDF-" in that window.
-  const needle = [0x25, 0x50, 0x44, 0x46, 0x2D] // "%PDF-"
-  const scanLen = Math.min(1024, inputBytes?.length || 0)
-  let headerAt = -1
-  for (let i = 0; i <= scanLen - needle.length; i++){
-    let ok = true
-    for (let j = 0; j < needle.length; j++){
-      if (inputBytes[i + j] !== needle[j]) { ok = false; break }
-    }
-    if (ok) { headerAt = i; break }
-  }
-  if (headerAt === -1){
-    throw new Error('Input is not a valid PDF (missing %PDF header).')
-  }
-  if (headerAt > 0){
-    inputBytes = inputBytes.slice(headerAt)
-  }
+  // Normalize PDF bytes early so we can give a clear error if the file is not a real PDF.
+  // This also trims leading junk bytes (BOM/proxy banners) that can break PDF.js.
+  inputBytes = normalizePdfBytes(inputBytes)
 
   const cfg = {
     applyAllPages: mode === RedactionMode.NO_CHARGE,
@@ -178,8 +203,31 @@ export async function redactPdfBytes(inputBytes, mode, opts = {}) {
   }
 
   // Load with PDF.js for rendering.
-  const loadingTask = pdfjsLib.getDocument({ data: inputBytes })
-  const pdf = await loadingTask.promise
+  // If PDF.js still complains about missing headers, retry with a deeper scan.
+  let pdf
+  try{
+    const loadingTask = pdfjsLib.getDocument({ data: inputBytes })
+    pdf = await loadingTask.promise
+  } catch (e){
+    const msg = String(e?.message || e)
+    if (msg.toLowerCase().includes('no pdf header found')){
+      // Some files violate the "header within 1024 bytes" convention.
+      // Try again scanning deeper before giving up.
+      const normalized = normalizePdfBytes(inputBytes, { maxScanBytes: Math.min(16 * 1024 * 1024, inputBytes.length) })
+      try{
+        const loadingTask = pdfjsLib.getDocument({ data: normalized })
+        pdf = await loadingTask.promise
+        inputBytes = normalized
+      } catch (e2){
+        const peek = inputBytes.slice(0, 24)
+        const hex = Array.from(peek).map(b => b.toString(16).padStart(2,'0')).join(' ')
+        const ascii = String.fromCharCode(...peek).replace(/[\x00-\x1F\x7F]/g,'.')
+        throw new Error(`PDF.js could not parse this file as a PDF (No PDF header found). This usually means the file is not a real PDF (often HTML/login page) or it is corrupted. First bytes (ascii): "${ascii}" | (hex): ${hex}`)
+      }
+    } else {
+      throw e
+    }
+  }
   const pageCount = pdf.numPages
 
   // Load original page sizes (points) so the rebuilt PDF prints normally.

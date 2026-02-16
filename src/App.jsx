@@ -2,7 +2,7 @@ import React, { useEffect, useRef, useState } from 'react'
 import { saveAs } from 'file-saver'
 import JSZip from 'jszip'
 import { pdfjsLib } from './pdfjsWorker'
-import { redactPdfBytes, RedactionMode, computeRedactionRects } from './redaction'
+import { redactPdfBytes, RedactionMode, computeRedactionRects, normalizePdfBytes } from './redaction'
 
 function niceName(name){
   return (name || 'document.pdf').replace(/\.pdf$/i,'')
@@ -66,9 +66,15 @@ export default function App(){
     setFiles(picked)
 
     if (picked[0]){
-      const bytes = new Uint8Array(await picked[0].arrayBuffer())
-      setSourceBytes(bytes)
-      setStatus(`Loaded ${picked.length} file(s). Previewing: ${picked[0].name}`)
+      try{
+        const raw = new Uint8Array(await picked[0].arrayBuffer())
+        const bytes = normalizePdfBytes(raw)
+        setSourceBytes(bytes)
+        setStatus(`Loaded ${picked.length} file(s). Previewing: ${picked[0].name}`)
+      } catch (err){
+        setSourceBytes(null)
+        setStatus(`File error for ${picked[0].name}: ${err?.message || String(err)}`)
+      }
     } else {
       setSourceBytes(null)
       setStatus('No PDFs selected.')

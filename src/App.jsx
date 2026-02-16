@@ -123,14 +123,29 @@ export default function App(){
     setBusy(true)
     try{
       const zip = new JSZip()
+      const failures = []
       for (const f of files){
-        const inputBytes = new Uint8Array(await f.arrayBuffer())
-        const out = await redactPdfBytes(inputBytes, mode, { applyAllPages, includeOcr })
-        zip.file(`${niceName(f.name)}__redacted.pdf`, out)
+        try{
+          const inputBytes = new Uint8Array(await f.arrayBuffer())
+          const out = await redactPdfBytes(inputBytes, mode, { applyAllPages, includeOcr })
+          zip.file(`${niceName(f.name)}__redacted.pdf`, out)
+        } catch (err){
+          failures.push({ name: f.name, msg: err?.message || String(err) })
+        }
+      }
+
+      if (Object.keys(zip.files).length === 0){
+        const first = failures[0]
+        throw new Error(first ? `No files exported. Example error for ${first.name}: ${first.msg}` : 'No files exported.')
       }
       const blob = await zip.generateAsync({ type: 'blob' })
       saveAs(blob, `redacted_pdfs_${new Date().toISOString().slice(0,10)}.zip`)
-      setStatus(`Batch export complete: ${files.length} PDFs in a ZIP (${includeOcr ? 'searchable (OCR)' : 'not searchable'}).`)
+      if (failures.length){
+        const shown = failures.slice(0, 3).map(f => `${f.name}: ${f.msg}`).join(' | ')
+        setStatus(`Batch export complete: ${Object.keys(zip.files).length}/${files.length} PDFs exported (${includeOcr ? 'searchable (OCR)' : 'not searchable'}). Skipped ${failures.length} file(s): ${shown}${failures.length > 3 ? ' …' : ''}`)
+      } else {
+        setStatus(`Batch export complete: ${files.length} PDFs in a ZIP (${includeOcr ? 'searchable (OCR)' : 'not searchable'}).`)
+      }
     } catch (err){
       setStatus(`Batch export error: ${err?.message || String(err)}`)
     } finally {
@@ -220,7 +235,7 @@ export default function App(){
             <button className="btn primary" onClick={exportSingle} disabled={!canExport}>
               Export First File
             </button>
-            <button className="btn" onClick={exportBatchZip} disabled={!canExport || files.length < 2}>
+            <button className="btn" onClick={exportBatchZip} disabled={!canExport || files.length < 1}>
               Batch Export ZIP
             </button>
             <button className="btn danger" onClick={clearAll} disabled={busy}>

@@ -147,6 +147,27 @@ async function addInvisibleTextLayer(pdfLibPage, font, text){
  * - alsoRedactFooter: boolean (default true; for SURGERY_CENTER)
  */
 export async function redactPdfBytes(inputBytes, mode, opts = {}) {
+  // Some files labeled ".pdf" may include leading bytes before the %PDF header
+  // (BOM, proxy banners, etc.). PDF.js will throw "No PDF header found".
+  // The PDF spec allows the header to appear within the first 1024 bytes.
+  // Normalize by trimming everything before the first "%PDF-" in that window.
+  const needle = [0x25, 0x50, 0x44, 0x46, 0x2D] // "%PDF-"
+  const scanLen = Math.min(1024, inputBytes?.length || 0)
+  let headerAt = -1
+  for (let i = 0; i <= scanLen - needle.length; i++){
+    let ok = true
+    for (let j = 0; j < needle.length; j++){
+      if (inputBytes[i + j] !== needle[j]) { ok = false; break }
+    }
+    if (ok) { headerAt = i; break }
+  }
+  if (headerAt === -1){
+    throw new Error('Input is not a valid PDF (missing %PDF header).')
+  }
+  if (headerAt > 0){
+    inputBytes = inputBytes.slice(headerAt)
+  }
+
   const cfg = {
     applyAllPages: mode === RedactionMode.NO_CHARGE,
     includeOcr: true,

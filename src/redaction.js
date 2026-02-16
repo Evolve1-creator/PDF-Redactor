@@ -22,11 +22,19 @@ export const RedactionMode = {
   NO_CHARGE: 'no_charge'            // Epic note header/footer template
 }
 
-// Fractions of rendered page height (viewer orientation), derived from the sample PDF.
+// Fractions of rendered page height (viewer orientation), tuned from the user's
+// sample “red highlight” PDF.
+//
+// Page 1 has a large patient/demographics header block.
+// Pages 2+ have only a thin running header line.
+// All pages include a small “Printed by / MRN / timestamp” footer line.
+//
+// We intentionally add a small safety margin (slightly larger than the red boxes)
+// to avoid leaving slivers of PHI behind.
 const TEMPLATE = {
-  page1TopFrac: 0.405,       // page 1: down through demographic/clinic header block
-  otherHeaderFrac: 0.040,    // pages 2+: thin header line
-  footerFrac: 0.035          // all pages: footer line block
+  page1TopFrac: 0.410,       // ~0.402 in sample, + safety margin
+  otherHeaderFrac: 0.022,    // ~0.017–0.019 in sample, + margin
+  footerFrac: 0.036          // ~0.032–0.037 in sample
 }
 
 function clamp(n, min, max){
@@ -43,6 +51,27 @@ function getEpicHeaderFooterRects(pageIndex, canvasW, canvasH){
     { x: 0, y: 0, w: canvasW, h: topH },
     { x: 0, y: canvasH - footH, w: canvasW, h: footH }
   ]
+}
+
+export function computeRedactionRects(mode, pageIndex, canvasW, canvasH, pageSizePt, cfg){
+  let rects = []
+
+  if (mode === RedactionMode.NO_CHARGE){
+    rects = getEpicHeaderFooterRects(pageIndex, canvasW, canvasH)
+  } else if (mode === RedactionMode.SURGERY_CENTER){
+    const sizePt = pageSizePt || { width: canvasW, height: canvasH }
+    const pageHeightCm = (sizePt.height / 72) * 2.54
+    const frac = (cfg?.surgeryTopCm ?? 4) / pageHeightCm
+    const topPx = Math.round(canvasH * frac)
+    rects = [{ x: 0, y: 0, w: canvasW, h: topPx }]
+    if (cfg?.alsoRedactFooter ?? true){
+      const footH = Math.round(canvasH * TEMPLATE.footerFrac)
+      rects.push({ x: 0, y: canvasH - footH, w: canvasW, h: footH })
+    }
+  }
+
+  if (cfg && cfg.applyAllPages === false && pageIndex !== 0) return []
+  return rects
 }
 
 async function renderPageToCanvas(pdfjsPage, scale){
@@ -151,27 +180,8 @@ export async function redactPdfBytes(inputBytes, mode, opts = {}) {
     const pdfjsPage = await pdf.getPage(i + 1)
     const { canvas, ctx } = await renderPageToCanvas(pdfjsPage, cfg.renderScale)
 
-    // Decide which rects to apply
-    let rects = []
-    if (mode === RedactionMode.NO_CHARGE){
-      rects = getEpicHeaderFooterRects(i, canvas.width, canvas.height)
-    } else if (mode === RedactionMode.SURGERY_CENTER){
-      // Convert cm band to pixels as a fraction of page height using PDF points → cm.
-      const sizePt = pageSizes[i] || pageSizes[0]
-      const pageHeightCm = (sizePt.height / 72) * 2.54
-      const frac = cfg.surgeryTopCm / pageHeightCm
-      const topPx = Math.round(canvas.height * frac)
-      rects = [{ x: 0, y: 0, w: canvas.width, h: topPx }]
-      if (cfg.alsoRedactFooter){
-        const footH = Math.round(canvas.height * TEMPLATE.footerFrac)
-        rects.push({ x: 0, y: canvas.height - footH, w: canvas.width, h: footH })
-      }
-    }
-
-    // Apply only first page if requested
-    if (!cfg.applyAllPages && i !== 0){
-      rects = []
-    }
+    const sizePtForRects = pageSizes[i] || pageSizes[0]
+    const rects = computeRedactionRects(mode, i, canvas.width, canvas.height, sizePtForRects, cfg)
 
     applyRedactionsToCanvas(ctx, rects)
 
@@ -179,9 +189,9 @@ export async function redactPdfBytes(inputBytes, mode, opts = {}) {
     const pngBytes = await canvasToPngBytes(canvas)
     const png = await outPdf.embedPng(pngBytes)
 
-    const sizePt = pageSizes[i] || { width: png.width, height: png.height }
-    const page = outPdf.addPage([sizePt.width, sizePt.height])
-    page.drawImage(png, { x: 0, y: 0, width: sizePt.width, height: sizePt.height })
+    const outSizePt = pageSizes[i] || { width: png.width, height: png.height }
+    const page = outPdf.addPage([outSizePt.width, outSizePt.height])
+    page.drawImage(png, { x: 0, y: 0, width: outSizePt.width, height: outSizePt.height })
 
     // OCR (after burn-in), embed invisible text
     if (cfg.includeOcr){

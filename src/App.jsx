@@ -2,7 +2,7 @@ import React, { useEffect, useRef, useState } from 'react'
 import { saveAs } from 'file-saver'
 import JSZip from 'jszip'
 import { pdfjsLib } from './pdfjsWorker'
-import { redactPdfBytes, RedactionMode } from './redaction'
+import { redactPdfBytes, RedactionMode, computeRedactionRects } from './redaction'
 
 function niceName(name){
   return (name || 'document.pdf').replace(/\.pdf$/i,'')
@@ -17,6 +17,23 @@ async function renderFirstPageToCanvas(bytes, canvas, scale = 1.25){
   canvas.width = Math.floor(viewport.width)
   canvas.height = Math.floor(viewport.height)
   await page.render({ canvasContext: ctx, viewport }).promise
+  // PDF.js page.view is in PDF points: [xMin, yMin, xMax, yMax]
+  const [x0, y0, x1, y1] = page.view
+  const pageSizePt = { width: x1 - x0, height: y1 - y0 }
+  return { pageSizePt, canvasW: canvas.width, canvasH: canvas.height }
+}
+
+function drawPreviewRects(ctx, rects){
+  ctx.save()
+  // Semi-transparent fill so users can confirm we’re hitting the right zones.
+  ctx.fillStyle = 'rgba(0,0,0,0.55)'
+  ctx.strokeStyle = 'rgba(255,60,80,0.90)'
+  ctx.lineWidth = 2
+  for (const r of rects){
+    ctx.fillRect(r.x, r.y, r.w, r.h)
+    ctx.strokeRect(r.x + 1, r.y + 1, Math.max(0, r.w - 2), Math.max(0, r.h - 2))
+  }
+  ctx.restore()
 }
 
 export default function App(){
@@ -27,7 +44,7 @@ export default function App(){
   const [busy, setBusy] = useState(false)
   const [status, setStatus] = useState('Upload one or more PDFs. Export is HIPAA burn‑in + OCR so the result stays searchable.')
   const [sourceBytes, setSourceBytes] = useState(null)
-  const [previewBytes, setPreviewBytes] = useState(null)
+  const [previewBusy, setPreviewBusy] = useState(false)
   const canvasRef = useRef(null)
 
   const canExport = files.length > 0 && !busy
@@ -54,44 +71,35 @@ export default function App(){
       setStatus(`Loaded ${picked.length} file(s). Previewing: ${picked[0].name}`)
     } else {
       setSourceBytes(null)
-      setPreviewBytes(null)
       setStatus('No PDFs selected.')
     }
     ev.target.value = ''
   }
 
-  // Build preview bytes (FAST: burn-in redaction but NO OCR for preview)
+  // FAST preview: render the original page 1, then draw the *same* redaction zones
+  // on top (no OCR, no PDF rebuild). This avoids long waits and makes the preview reliable.
   useEffect(() => {
     let cancelled = false
     ;(async () => {
-      if (!sourceBytes) return
+      if (!sourceBytes || !canvasRef.current) return
+      setPreviewBusy(true)
       try{
-        const out = await redactPdfBytes(sourceBytes, mode, { applyAllPages, includeOcr: false })
-        if (!cancelled) setPreviewBytes(new Uint8Array(out))
+        const { pageSizePt, canvasW, canvasH } = await renderFirstPageToCanvas(sourceBytes, canvasRef.current, 1.25)
+        const ctx = canvasRef.current.getContext('2d')
+        const rects = computeRedactionRects(mode, 0, canvasW, canvasH, pageSizePt, {
+          applyAllPages,
+          surgeryTopCm: 4,
+          alsoRedactFooter: true,
+        })
+        drawPreviewRects(ctx, rects)
       }catch(err){
-        if (!cancelled) {
-          setPreviewBytes(sourceBytes)
-          setStatus(`Preview build error (showing original): ${err?.message || String(err)}`)
-        }
+        if (!cancelled) setStatus(`Preview error: ${err?.message || String(err)}`)
+      }finally{
+        if (!cancelled) setPreviewBusy(false)
       }
     })()
     return () => { cancelled = true }
   }, [sourceBytes, mode, applyAllPages])
-
-  // Render preview to canvas whenever preview bytes update
-  useEffect(() => {
-    let cancelled = false
-    ;(async () => {
-      if (!previewBytes || !canvasRef.current) return
-      try{
-        await renderFirstPageToCanvas(previewBytes, canvasRef.current, 1.25)
-        if (!cancelled) setStatus(prev => prev)
-      }catch(err){
-        if (!cancelled) setStatus(`Preview render error: ${err?.message || String(err)}`)
-      }
-    })()
-    return () => { cancelled = true }
-  }, [previewBytes])
 
   const exportSingle = async () => {
     if (!files[0]) return
@@ -133,7 +141,6 @@ export default function App(){
   const clearAll = () => {
     setFiles([])
     setSourceBytes(null)
-    setPreviewBytes(null)
     setStatus('Cleared. Upload PDFs to begin.')
   }
 
@@ -246,6 +253,11 @@ export default function App(){
 
         <div className="card">
           <h2>Preview (Page 1)</h2>
+          {previewBusy && (
+            <div className="small" style={{marginBottom:10}}>
+              Rendering preview…
+            </div>
+          )}
           <div className="canvasWrap">
             <canvas ref={canvasRef} />
           </div>

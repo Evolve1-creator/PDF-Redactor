@@ -150,6 +150,11 @@ a{color:inherit}
   border:1px solid var(--border);
   color:var(--muted);
 }
+.badge.danger{
+  color: #ffb3c0;
+  border-color: rgba(255,80,110,.45);
+  background: rgba(255,80,110,.08);
+}
 .canvasWrap{
   overflow:auto;
   border:1px solid var(--border);

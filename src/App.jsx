@@ -36,8 +36,21 @@ function drawPreviewRects(ctx, rects){
   ctx.restore()
 }
 
+async function preflightLooksLikePdf(file){
+  // We only read a small slice for fast validation & helpful error messaging.
+  // Full parsing still happens during export.
+  const SLICE = 2 * 1024 * 1024
+  const head = new Uint8Array(await file.slice(0, SLICE).arrayBuffer())
+  try{
+    normalizePdfBytes(head)
+    return { ok: true, err: '' }
+  }catch(e){
+    return { ok: false, err: e?.message || String(e) }
+  }
+}
+
 export default function App(){
-  const [files, setFiles] = useState([])
+  const [fileItems, setFileItems] = useState([]) // { file, ok, err }
   const [mode, setMode] = useState(RedactionMode.NO_CHARGE)
   const [applyAllPages, setApplyAllPages] = useState(true)
   const [includeOcr, setIncludeOcr] = useState(true)
@@ -47,7 +60,9 @@ export default function App(){
   const [previewBusy, setPreviewBusy] = useState(false)
   const canvasRef = useRef(null)
 
-  const canExport = files.length > 0 && !busy
+  const validItems = fileItems.filter(x => x.ok)
+  const hasValid = validItems.length > 0
+  const canExport = hasValid && !busy
 
   // Keep sane defaults when switching modes
   useEffect(() => {
@@ -62,22 +77,44 @@ export default function App(){
   }, [mode])
 
   const onPick = async (ev) => {
-    const picked = Array.from(ev.target.files || []).filter(f => /\.pdf$/i.test(f.name))
-    setFiles(picked)
-
-    if (picked[0]){
-      try{
-        const raw = new Uint8Array(await picked[0].arrayBuffer())
-        const bytes = normalizePdfBytes(raw)
-        setSourceBytes(bytes)
-        setStatus(`Loaded ${picked.length} file(s). Previewing: ${picked[0].name}`)
-      } catch (err){
-        setSourceBytes(null)
-        setStatus(`File error for ${picked[0].name}: ${err?.message || String(err)}`)
-      }
-    } else {
+    const picked = Array.from(ev.target.files || [])
+    if (!picked.length){
+      setFileItems([])
       setSourceBytes(null)
-      setStatus('No PDFs selected.')
+      setStatus('No files selected.')
+      ev.target.value = ''
+      return
+    }
+
+    // Preflight each file so we can:
+    // 1) avoid relying on filename extensions
+    // 2) give clear feedback (HTML masquerading as PDF, missing %PDF-, etc.)
+    const items = []
+    for (const f of picked){
+      const pf = await preflightLooksLikePdf(f)
+      items.push({ file: f, ok: pf.ok, err: pf.err })
+    }
+    setFileItems(items)
+
+    const firstValid = items.find(x => x.ok)
+    if (!firstValid){
+      setSourceBytes(null)
+      const first = items[0]
+      setStatus(`No valid PDFs detected. Example: ${first?.file?.name || 'file'} → ${first?.err || 'unknown error'}`)
+      ev.target.value = ''
+      return
+    }
+
+    try{
+      const raw = new Uint8Array(await firstValid.file.arrayBuffer())
+      // Normalize for preview so PDF.js is less likely to choke on leading junk bytes.
+      const bytes = normalizePdfBytes(raw, { maxScanBytes: Math.min(raw.length, 16 * 1024 * 1024) })
+      setSourceBytes(bytes)
+      const invalidCount = items.filter(x => !x.ok).length
+      setStatus(`Loaded ${items.length} file(s) (${invalidCount} invalid). Previewing: ${firstValid.file.name}`)
+    } catch (err){
+      setSourceBytes(null)
+      setStatus(`File error for ${firstValid.file.name}: ${err?.message || String(err)}`)
     }
     ev.target.value = ''
   }
@@ -108,10 +145,11 @@ export default function App(){
   }, [sourceBytes, mode, applyAllPages])
 
   const exportSingle = async () => {
-    if (!files[0]) return
+    const first = validItems[0]
+    if (!first) return
     setBusy(true)
     try{
-      const f = files[0]
+      const f = first.file
       const inputBytes = new Uint8Array(await f.arrayBuffer())
       const out = await redactPdfBytes(inputBytes, mode, { applyAllPages, includeOcr })
       const blob = new Blob([out], { type: 'application/pdf' })
@@ -125,16 +163,23 @@ export default function App(){
   }
 
   const exportBatchZip = async () => {
-    if (files.length === 0) return
+    if (!hasValid) return
     setBusy(true)
     try{
       const zip = new JSZip()
       const failures = []
-      for (const f of files){
+
+      // Record invalid files immediately (these never enter the redaction pipeline)
+      for (const it of fileItems.filter(x => !x.ok)){
+        failures.push({ name: it.file.name, msg: it.err || 'Not a valid PDF.' })
+      }
+
+      for (const it of validItems){
+        const f = it.file
         try{
           const inputBytes = new Uint8Array(await f.arrayBuffer())
           const out = await redactPdfBytes(inputBytes, mode, { applyAllPages, includeOcr })
-          zip.file(`${niceName(f.name)}__redacted.pdf`, out)
+          zip.file(`${niceName(f.name)}__redacted.pdf`, out, { binary: true })
         } catch (err){
           failures.push({ name: f.name, msg: err?.message || String(err) })
         }
@@ -144,13 +189,15 @@ export default function App(){
         const first = failures[0]
         throw new Error(first ? `No files exported. Example error for ${first.name}: ${first.msg}` : 'No files exported.')
       }
+
       const blob = await zip.generateAsync({ type: 'blob' })
       saveAs(blob, `redacted_pdfs_${new Date().toISOString().slice(0,10)}.zip`)
+
       if (failures.length){
         const shown = failures.slice(0, 3).map(f => `${f.name}: ${f.msg}`).join(' | ')
-        setStatus(`Batch export complete: ${Object.keys(zip.files).length}/${files.length} PDFs exported (${includeOcr ? 'searchable (OCR)' : 'not searchable'}). Skipped ${failures.length} file(s): ${shown}${failures.length > 3 ? ' …' : ''}`)
+        setStatus(`Batch export complete: ${Object.keys(zip.files).length}/${fileItems.length} PDFs exported (${includeOcr ? 'searchable (OCR)' : 'not searchable'}). Skipped ${failures.length} file(s): ${shown}${failures.length > 3 ? ' …' : ''}`)
       } else {
-        setStatus(`Batch export complete: ${files.length} PDFs in a ZIP (${includeOcr ? 'searchable (OCR)' : 'not searchable'}).`)
+        setStatus(`Batch export complete: ${Object.keys(zip.files).length} PDFs in a ZIP (${includeOcr ? 'searchable (OCR)' : 'not searchable'}).`)
       }
     } catch (err){
       setStatus(`Batch export error: ${err?.message || String(err)}`)
@@ -160,7 +207,7 @@ export default function App(){
   }
 
   const clearAll = () => {
-    setFiles([])
+    setFileItems([])
     setSourceBytes(null)
     setStatus('Cleared. Upload PDFs to begin.')
   }
@@ -180,7 +227,7 @@ export default function App(){
       <div className="grid">
         <div className="card">
           <h2>1) Upload PDFs</h2>
-          <input className="input" type="file" accept="application/pdf" multiple onChange={onPick} />
+          <input className="input" type="file" accept="application/pdf,.pdf" multiple onChange={onPick} />
           <div className="small" style={{marginTop:10}}>
             Preview shows the same burn‑in redaction zones (preview skips OCR to stay fast).
           </div>
@@ -239,9 +286,9 @@ export default function App(){
           <h2>4) Export</h2>
           <div className="row">
             <button className="btn primary" onClick={exportSingle} disabled={!canExport}>
-              Export First File
+              Export First Valid PDF
             </button>
-            <button className="btn" onClick={exportBatchZip} disabled={!canExport || files.length < 1}>
+            <button className="btn" onClick={exportBatchZip} disabled={!canExport}>
               Batch Export ZIP
             </button>
             <button className="btn danger" onClick={clearAll} disabled={busy}>
@@ -250,15 +297,18 @@ export default function App(){
           </div>
 
           <div className="fileList">
-            {files.map((f, idx) => (
-              <div className="fileItem" key={idx}>
-                <div style={{display:'flex', flexDirection:'column', gap:2}}>
-                  <div style={{fontWeight:700, fontSize:13}}>{f.name}</div>
-                  <div className="small">{(f.size/1024/1024).toFixed(2)} MB</div>
+            {fileItems.map((it, idx) => {
+              const badge = idx === 0 && it.ok ? 'Preview' : (it.ok ? 'Queued' : 'Invalid')
+              return (
+                <div className="fileItem" key={idx}>
+                  <div style={{display:'flex', flexDirection:'column', gap:2}}>
+                    <div style={{fontWeight:700, fontSize:13}}>{it.file.name}</div>
+                    <div className="small">{(it.file.size/1024/1024).toFixed(2)} MB{it.ok ? '' : ` • ${it.err}`}</div>
+                  </div>
+                  <span className={'badge ' + (it.ok ? '' : 'danger')}>{badge}</span>
                 </div>
-                <span className="badge">{idx === 0 ? 'Preview' : 'Queued'}</span>
-              </div>
-            ))}
+              )
+            })}
           </div>
 
           <div className="toast">

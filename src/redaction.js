@@ -45,7 +45,9 @@ const TEMPLATE = {
  * - Some gateways prepend junk bytes before the %PDF header.
  * - Batch exports should skip/bail with a *clear* error instead of a generic PDF.js parse failure.
  */
-export function normalizePdfBytes(bytes, { maxScanBytes = 2 * 1024 * 1024 } = {}){
+// NOTE: Some portals prepend a lot of bytes before the header (or embed PDFs in wrappers).
+// We default to a deeper scan than 1–2MB to reduce false "No PDF header" errors.
+export function normalizePdfBytes(bytes, { maxScanBytes = 16 * 1024 * 1024 } = {}){
   if (!bytes || bytes.length < 5) throw new Error('File is empty or too small to be a PDF.')
 
   // Detect HTML masquerading as PDF
@@ -77,6 +79,27 @@ export function normalizePdfBytes(bytes, { maxScanBytes = 2 * 1024 * 1024 } = {}
     throw new Error('Found a %PDF marker, but the file does not appear to be a valid PDF header. The file may be corrupted or not actually a PDF.')
   }
   return out
+}
+
+async function assertOcrAssetsPresent(){
+  // For fully client-side operation, the language data must be served from this app.
+  // We check for common filenames so failures are obvious (instead of silently producing
+  // non-searchable PDFs).
+  const candidates = [
+    '/tessdata/eng.traineddata',
+    '/tessdata/eng.traineddata.gz'
+  ]
+  for (const url of candidates){
+    try{
+      const res = await fetch(url, { method: 'HEAD', cache: 'no-store' })
+      if (res.ok) return url
+    }catch{}
+  }
+  throw new Error(
+    'OCR is enabled, but the English OCR model file was not found at /public/tessdata/. ' +
+    'Add eng.traineddata (or eng.traineddata.gz) to public/tessdata and redeploy. ' +
+    'Without it, the export cannot be made searchable client-side.'
+  )
 }
 
 function clamp(n, min, max){
@@ -234,16 +257,27 @@ export async function redactPdfBytes(inputBytes, mode, opts = {}) {
   const pageSizes = await getPdfLibPageSizes(inputBytes)
 
   // OCR worker (single worker reused across pages)
+  // tesseract.js v5 requires explicit loadLanguage/initialize.
   let worker = null
+  let ocrModelUrl = null
   if (cfg.includeOcr){
-    worker = await Tesseract.createWorker('eng', 1, {
+    // Make missing OCR assets an explicit, actionable error.
+    ocrModelUrl = await assertOcrAssetsPresent()
+
+    worker = await Tesseract.createWorker({
       langPath: '/tessdata',
-      logger: () => {}
+      logger: () => {},
     })
+    await worker.loadLanguage('eng')
+    await worker.initialize('eng')
   }
 
   const outPdf = await PDFDocument.create()
   const font = await outPdf.embedFont(StandardFonts.Helvetica)
+
+  // Used to verify the output is actually searchable when OCR is enabled.
+  let ocrTotalChars = 0
+  let ocrNonEmptyPages = 0
 
   for (let i = 0; i < pageCount; i++){
     const pdfjsPage = await pdf.getPage(i + 1)
@@ -264,15 +298,39 @@ export async function redactPdfBytes(inputBytes, mode, opts = {}) {
 
     // OCR (after burn-in), embed invisible text
     if (cfg.includeOcr){
-      const dataUrl = canvas.toDataURL('image/png')
-      const result = await worker.recognize(dataUrl)
-      const text = (result?.data?.text || '').trim()
-      if (text) await addInvisibleTextLayer(page, font, text)
+      let text = ''
+      try{
+        const dataUrl = canvas.toDataURL('image/png')
+        const result = await worker.recognize(dataUrl)
+        text = (result?.data?.text || '').trim()
+      }catch(e){
+        const msg = String(e?.message || e)
+        throw new Error(
+          `OCR failed on page ${i + 1}. ${msg} ` +
+          `(OCR model expected at ${ocrModelUrl || '/tessdata/eng.traineddata'}).`
+        )
+      }
+      if (text){
+        ocrTotalChars += text.length
+        ocrNonEmptyPages += 1
+        await addInvisibleTextLayer(page, font, text)
+      }
     }
   }
 
   if (worker){
     try { await worker.terminate() } catch {}
+  }
+
+  // If OCR is enabled but produced no text at all, the file will not be searchable.
+  // Fail loudly with a specific message so the user can fix it (usually missing tessdata,
+  // blocked fetch, or OCR set to a language not present).
+  if (cfg.includeOcr && ocrTotalChars === 0){
+    throw new Error(
+      'OCR completed but produced 0 extractable characters, so the output is NOT searchable. ' +
+      'Common causes: missing /public/tessdata/eng.traineddata (or .gz), blocked network fetch for tessdata, ' +
+      'or OCR failing silently due to browser restrictions. Add tessdata locally and try again. '
+    )
   }
 
   return await outPdf.save({ useObjectStreams: false })

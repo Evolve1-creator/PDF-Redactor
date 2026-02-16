@@ -1,36 +1,53 @@
-# PDF Redactor (Text-Searchable Export)
+# PHI PDF Redactor (Client-side)
 
-This Vite + React app exports **text-searchable** PDFs by applying redaction overlays directly to the PDF (no canvas screenshot / no image-based PDF).
+This app redacts PHI from PDFs created with **Microsoft Print to PDF**, using fixed redaction rectangles from your template files, and regenerates a **new** PDF that is readable by ChatGPT.
 
-## Why your prior exports were "unreadable"
-If you render pages to a `<canvas>` and then create a new PDF from the canvas image (e.g., `jsPDF.addImage(...)`), the output becomes image-based.
-That destroys the text layer, so you can't text-search/copy.
+## Redaction rectangles (from your template)
 
-## How this app fixes it
-- **Preview** uses PDF.js (canvas is fine for preview).
-- **Export** uses **pdf-lib**:
-  - Loads the original PDF bytes
-  - Draws opaque rectangles (redaction) on the original pages
-  - Saves the PDF **without rasterizing**, so the PDF remains text-searchable.
+### Epic Note (Header/Footer)
+- **Page 1**: Top block `612 x 300` (points) from the top-left
+- **Every page (including page 1)**: `1 cm` header band + `1 cm` footer band
 
-> Note: Overlay-style redaction does **not** remove underlying PDF content. You indicated no PHI exists under the redacted region, so overlay is acceptable.
+### Surgery Center (Top Band)
+- **Every page**: `4 cm` top band
 
-## Run locally
+## Output modes
+
+### 1) Searchable “true text” PDF (default)
+Best for Microsoft Print-to-PDF documents because they already contain text.
+- Extracts text with PDF.js
+- Drops any text that falls inside the redaction rectangles
+- Rebuilds a new PDF (text objects) using pdf-lib
+- Produces a `__gpt.txt` alongside the PDF
+
+This mode does **not** require OCR assets.
+
+### 2) Exact-look PDF (raster + OCR)
+Use when the PDF is image-only (scanned) or text extraction fails.
+- Renders each page to pixels
+- Burns-in black rectangles (true redaction)
+- Rebuilds a new PDF from the redacted images
+- Runs OCR and embeds a low-opacity text layer for search/extraction
+
+#### OCR assets (fully client-side)
+To keep OCR fully client-side, put the language file here:
+
+```
+/public/tessdata/eng.traineddata
+```
+
+If OCR assets are missing or blocked, the app will still export the redacted image-PDF but will warn that it is not searchable.
+
+## Run
+
 ```bash
-npm install
+npm i
 npm run dev
 ```
 
 ## Build
+
 ```bash
 npm run build
 npm run preview
 ```
-
-## Customize redaction zones
-Edit `src/redaction.js`.
-- Surgery Center default: **top 4 cm on page 1**
-- No-Charge: example blocks (adjust to your layout)
-
-## GitHub
-Upload this folder to a repo (or unzip the provided zip and push).

@@ -1,76 +1,94 @@
-<!doctype html>
-<html lang="en">
-<head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>PHI PDF Redactor (Client-side, Searchable Output)</title>
-  <link rel="stylesheet" href="styles.css" />
-</head>
-<body>
-  <div class="app">
-    <header>
-      <h1>PHI PDF Redactor</h1>
-      <p class="sub">Client-side redaction for Microsoft “Print to PDF” files. Outputs a <b>searchable PDF</b> + GPT-friendly text in a ZIP.</p>
-      <p class="warn">HIPAA note: this app <b>rebuilds</b> a new PDF from extracted text (and optional OCR fallback). It does not keep the original PDF objects.</p>
-    </header>
-
-    <section class="card">
-      <h2>1) Upload</h2>
-      <input id="fileInput" type="file" multiple accept=".pdf,.html,.htm,.txt,.png,.jpg,.jpeg" />
-      <div class="row">
-        <label class="toggle"><input id="ocrToggle" type="checkbox" /> OCR fallback (only if page has near-zero extractable text)</label>
-      </div>
-      <div class="row hint">If your input is a real Microsoft Print-to-PDF, OCR usually isn’t needed.</div>
-    </section>
-
-    <section class="card">
-      <h2>2) Redaction Mode</h2>
-      <div class="row">
-        <label><input type="radio" name="mode" value="no_charge" checked /> Epic Note (Header/Footer) — <span class="mono">page1: 612×300</span>, plus <span class="mono">1 cm top</span> + <span class="mono">1 cm bottom</span> on all pages</label>
-      </div>
-      <div class="row">
-        <label><input type="radio" name="mode" value="surgery_center" /> Surgery Center — <span class="mono">top 4 cm</span> on all pages</label>
-      </div>
-      <div class="row hint">These parameters come from your provided templates (<span class="mono">noChargeRedactor.js</span> and <span class="mono">surgeryCenterRedactor.js</span>).</div>
-    </section>
-
-    <section class="card">
-      <h2>3) Export</h2>
-      <div class="row">
-        <button id="exportZipBtn">Batch Export ZIP</button>
-        <button id="clearBtn" class="secondary">Clear</button>
-      </div>
-      <div id="status" class="status"></div>
-      <div id="fileList" class="filelist"></div>
-    </section>
-
-    <footer>
-      <details>
-        <summary>Deployment note (Vercel)</summary>
-        <div class="hint">
-          This is a <b>static</b> app (no npm install). Deploy the folder as a static site.
-          If you previously had registry issues, this avoids them entirely.
-        </div>
-      </details>
-      <details>
-        <summary>Privacy note about OCR</summary>
-        <div class="hint">
-          OCR (if enabled) runs in your browser. No document content is uploaded anywhere by this app.
-          The OCR library code may be loaded from a CDN unless you self-host it (see <span class="mono">vendor/README.txt</span>).
-        </div>
-      </details>
-    </footer>
-  </div>
-
-  <!-- Libraries (CDN by default). You can self-host by downloading these files into /vendor and updating script srcs. -->
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/FileSaver.js/2.0.5/FileSaver.min.js"></script>
-  <script src="https://unpkg.com/pdf-lib@1.17.1/dist/pdf-lib.min.js"></script>
-  <script src="https://unpkg.com/pdfjs-dist@4.10.38/build/pdf.min.js"></script>
-
-  <!-- Optional OCR (only used if you check OCR fallback). -->
-  <script src="https://unpkg.com/tesseract.js@5.1.0/dist/tesseract.min.js"></script>
-
-  <script type="module" src="app.js"></script>
-</body>
-</html>
+ (cd "$(git rev-parse --show-toplevel)" && git apply --3way <<'EOF' 
+diff --git a/index.html b/index.html
+index ac2b149542f72792c97176d67b823604ec781fb4..da492e7ff1b8fd40e438ae30080146f25ed61318 100644
+--- a/index.html
++++ b/index.html
+@@ -1,76 +1,12 @@
+ <!doctype html>
+ <html lang="en">
+-<head>
+-  <meta charset="UTF-8" />
+-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+-  <title>PHI PDF Redactor (Client-side, Searchable Output)</title>
+-  <link rel="stylesheet" href="styles.css" />
+-</head>
+-<body>
+-  <div class="app">
+-    <header>
+-      <h1>PHI PDF Redactor</h1>
+-      <p class="sub">Client-side redaction for Microsoft “Print to PDF” files. Outputs a <b>searchable PDF</b> + GPT-friendly text in a ZIP.</p>
+-      <p class="warn">HIPAA note: this app <b>rebuilds</b> a new PDF from extracted text (and optional OCR fallback). It does not keep the original PDF objects.</p>
+-    </header>
+-
+-    <section class="card">
+-      <h2>1) Upload</h2>
+-      <input id="fileInput" type="file" multiple accept=".pdf,.html,.htm,.txt,.png,.jpg,.jpeg" />
+-      <div class="row">
+-        <label class="toggle"><input id="ocrToggle" type="checkbox" /> OCR fallback (only if page has near-zero extractable text)</label>
+-      </div>
+-      <div class="row hint">If your input is a real Microsoft Print-to-PDF, OCR usually isn’t needed.</div>
+-    </section>
+-
+-    <section class="card">
+-      <h2>2) Redaction Mode</h2>
+-      <div class="row">
+-        <label><input type="radio" name="mode" value="no_charge" checked /> Epic Note (Header/Footer) — <span class="mono">page1: 612×300</span>, plus <span class="mono">1 cm top</span> + <span class="mono">1 cm bottom</span> on all pages</label>
+-      </div>
+-      <div class="row">
+-        <label><input type="radio" name="mode" value="surgery_center" /> Surgery Center — <span class="mono">top 4 cm</span> on all pages</label>
+-      </div>
+-      <div class="row hint">These parameters come from your provided templates (<span class="mono">noChargeRedactor.js</span> and <span class="mono">surgeryCenterRedactor.js</span>).</div>
+-    </section>
+-
+-    <section class="card">
+-      <h2>3) Export</h2>
+-      <div class="row">
+-        <button id="exportZipBtn">Batch Export ZIP</button>
+-        <button id="clearBtn" class="secondary">Clear</button>
+-      </div>
+-      <div id="status" class="status"></div>
+-      <div id="fileList" class="filelist"></div>
+-    </section>
+-
+-    <footer>
+-      <details>
+-        <summary>Deployment note (Vercel)</summary>
+-        <div class="hint">
+-          This is a <b>static</b> app (no npm install). Deploy the folder as a static site.
+-          If you previously had registry issues, this avoids them entirely.
+-        </div>
+-      </details>
+-      <details>
+-        <summary>Privacy note about OCR</summary>
+-        <div class="hint">
+-          OCR (if enabled) runs in your browser. No document content is uploaded anywhere by this app.
+-          The OCR library code may be loaded from a CDN unless you self-host it (see <span class="mono">vendor/README.txt</span>).
+-        </div>
+-      </details>
+-    </footer>
+-  </div>
+-
+-  <!-- Libraries (CDN by default). You can self-host by downloading these files into /vendor and updating script srcs. -->
+-  <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+-  <script src="https://cdnjs.cloudflare.com/ajax/libs/FileSaver.js/2.0.5/FileSaver.min.js"></script>
+-  <script src="https://unpkg.com/pdf-lib@1.17.1/dist/pdf-lib.min.js"></script>
+-  <script src="https://unpkg.com/pdfjs-dist@4.10.38/build/pdf.min.js"></script>
+-
+-  <!-- Optional OCR (only used if you check OCR fallback). -->
+-  <script src="https://unpkg.com/tesseract.js@5.1.0/dist/tesseract.min.js"></script>
+-
+-  <script type="module" src="app.js"></script>
+-</body>
++  <head>
++    <meta charset="UTF-8" />
++    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
++    <title>PDF Redactor</title>
++  </head>
++  <body>
++    <div id="root"></div>
++    <script type="module" src="/src/main.jsx"></script>
++  </body>
+ </html>
+ 
+EOF
+)

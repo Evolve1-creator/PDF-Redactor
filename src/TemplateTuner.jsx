@@ -36,8 +36,8 @@ function drawOverlayBands(canvas, scale, topInches, bottomInches) {
   const W = canvas.width;
   const H = canvas.height;
 
-  const topPx = pxFromInches(topInches || 0, scale);
-  const botPx = pxFromInches(bottomInches || 0, scale);
+  const topPx = pxFromInches(Number(topInches || 0), scale);
+  const botPx = pxFromInches(Number(bottomInches || 0), scale);
 
   ctx.save();
   ctx.fillStyle = "rgba(255, 70, 70, 0.35)";
@@ -50,6 +50,8 @@ export default function TemplateTuner({ open, onClose, templateKey, sampleFile }
   const baseTemplate = useMemo(() => (templateKey ? mergeTemplate(templateKey) : null), [templateKey, open]);
   const [loading, setLoading] = useState(false);
   const [hasPage2, setHasPage2] = useState(false);
+  const [status, setStatus] = useState("");
+  const [errMsg, setErrMsg] = useState("");
 
   // tuning values (inches)
   const [topFirst, setTopFirst] = useState(0.0);
@@ -59,10 +61,14 @@ export default function TemplateTuner({ open, onClose, templateKey, sampleFile }
   const p1Ref = useRef(null);
   const p2Ref = useRef(null);
 
+  const isBandTemplate = baseTemplate?.mode === "top_band_inches" || baseTemplate?.mode === "bands_inches";
+
+  // initialize state from template
   useEffect(() => {
     if (!open || !baseTemplate) return;
 
-    // initialize state from template
+    setErrMsg("");
+    setStatus("");
     if (baseTemplate.mode === "top_band_inches") {
       setTopFirst(baseTemplate.topBandInches.firstPage ?? 0);
       setTopOther(baseTemplate.topBandInches.otherPages ?? 0);
@@ -76,33 +82,44 @@ export default function TemplateTuner({ open, onClose, templateKey, sampleFile }
     }
   }, [open, templateKey]);
 
+  // render preview with debounce (so sliders don't spam renders)
   useEffect(() => {
     let cancelled = false;
+    let t = null;
 
     async function go() {
-      if (!open || !sampleFile || !baseTemplate) return;
+      if (!open) return;
+      if (!sampleFile) {
+        setStatus("Upload at least 1 PDF to preview.");
+        return;
+      }
+      if (!baseTemplate) return;
 
       setLoading(true);
+      setErrMsg("");
+      setStatus("Rendering preview...");
       setHasPage2(false);
 
       try {
         const buf = await sampleFile.arrayBuffer();
-        const pdf = await pdfjsLib.getDocument({ data: buf }).promise;
+
+        // pdf.js is happiest with Uint8Array
+        const pdf = await pdfjsLib.getDocument({ data: new Uint8Array(buf) }).promise;
 
         // page 1
         const p1 = await renderPageToCanvas(pdf, 1);
         if (cancelled) return;
-        drawOverlayBands(p1.canvas, p1.scale, topFirst, bottomAll);
+        if (isBandTemplate) drawOverlayBands(p1.canvas, p1.scale, topFirst, baseTemplate.mode === "bands_inches" ? bottomAll : 0);
         if (p1Ref.current) {
           p1Ref.current.innerHTML = "";
           p1Ref.current.appendChild(p1.canvas);
         }
 
-        // page 2 if exists
+        // page 2
         if (pdf.numPages >= 2) {
           const p2 = await renderPageToCanvas(pdf, 2);
           if (cancelled) return;
-          drawOverlayBands(p2.canvas, p2.scale, topOther, bottomAll);
+          if (isBandTemplate) drawOverlayBands(p2.canvas, p2.scale, topOther, baseTemplate.mode === "bands_inches" ? bottomAll : 0);
           if (p2Ref.current) {
             p2Ref.current.innerHTML = "";
             p2Ref.current.appendChild(p2.canvas);
@@ -112,24 +129,30 @@ export default function TemplateTuner({ open, onClose, templateKey, sampleFile }
           if (p2Ref.current) p2Ref.current.innerHTML = "";
           setHasPage2(false);
         }
+
+        setStatus("Preview ready.");
       } catch (e) {
         console.error(e);
+        setErrMsg(e?.message || String(e));
+        setStatus("Preview failed.");
       } finally {
         if (!cancelled) setLoading(false);
       }
     }
 
-    go();
-    return () => { cancelled = true; }; // keep lint simple
-  }, [open, sampleFile, templateKey, topFirst, topOther, bottomAll]);
+    t = setTimeout(go, 250);
+    return () => {
+      cancelled = true;
+      if (t) clearTimeout(t);
+    };
+  }, [open, sampleFile, templateKey, topFirst, topOther, bottomAll, baseTemplate?.mode]);
 
   if (!open) return null;
   if (!baseTemplate) return null;
 
-  const isBandTemplate = baseTemplate.mode === "top_band_inches" || baseTemplate.mode === "bands_inches";
-
   const onSave = () => {
     if (!isBandTemplate) return;
+
     if (baseTemplate.mode === "top_band_inches") {
       saveTemplateOverride(templateKey, {
         topBandInches: {
@@ -151,7 +174,6 @@ export default function TemplateTuner({ open, onClose, templateKey, sampleFile }
 
   const onReset = () => {
     clearTemplateOverride(templateKey);
-    // re-init from base (without override) by forcing reload
     const base = TEMPLATES[templateKey];
     if (base.mode === "top_band_inches") {
       setTopFirst(base.topBandInches.firstPage ?? 0);
@@ -162,6 +184,8 @@ export default function TemplateTuner({ open, onClose, templateKey, sampleFile }
       setTopOther(base.bandsInches.topOtherPages ?? 0);
       setBottomAll(base.bandsInches.bottomAllPages ?? 0);
     }
+    setErrMsg("");
+    setStatus("Reset to defaults.");
   };
 
   return (
@@ -213,18 +237,33 @@ export default function TemplateTuner({ open, onClose, templateKey, sampleFile }
                 <button className="btn ghost" onClick={onReset} disabled={loading}>Reset to defaults</button>
               </div>
 
-              <div className="small muted">Overlay preview is shown in red; actual redactions are solid black in output.</div>
+              <div className="small muted">
+                Overlay preview is shown in red; actual redactions are solid black in output.
+                {status ? <span className="status"> {loading ? "Loading…" : status}</span> : null}
+              </div>
+
+              {errMsg ? (
+                <div className="errorBox">
+                  <div className="errorTitle">Preview error</div>
+                  <div className="errorText">{errMsg}</div>
+                  <div className="errorHint">Tip: if this PDF is password-protected or unusual, try a different sample file.</div>
+                </div>
+              ) : null}
             </div>
 
             <div className="previewGrid">
               <div className="previewCard">
                 <div className="previewTitle">Preview: Page 1</div>
-                <div className="previewCanvas" ref={p1Ref}>{loading ? "Loading..." : ""}</div>
+                <div className="previewCanvas" ref={p1Ref}>
+                  {!loading && !errMsg ? "Rendering..." : ""}
+                </div>
               </div>
 
               <div className="previewCard">
                 <div className="previewTitle">Preview: Page 2{hasPage2 ? "" : " (not available)"}</div>
-                <div className="previewCanvas" ref={p2Ref}>{loading ? "Loading..." : (!hasPage2 ? "Upload a multi-page PDF to preview page 2." : "")}</div>
+                <div className="previewCanvas" ref={p2Ref}>
+                  {!loading && !errMsg ? (hasPage2 ? "Rendering..." : "Upload a multi-page PDF to preview page 2.") : ""}
+                </div>
               </div>
             </div>
           </div>

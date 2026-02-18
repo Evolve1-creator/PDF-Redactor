@@ -43,3 +43,9 @@ h2{margin:0 0 10px;font-size:16px}
 .previewTitle{color:rgba(255,255,255,0.78);font-size:12px;margin-bottom:8px}
 .previewCanvas{overflow:auto;border-radius:10px;border:1px solid rgba(255,255,255,0.10);background:rgba(0,0,0,0.22);padding:8px;min-height:220px;display:flex;align-items:center;justify-content:center;color:rgba(255,255,255,0.6);font-size:12px}
 .warn{padding:10px;border:1px solid rgba(255,255,255,0.12);border-radius:14px;background:rgba(255,180,60,0.10);color:rgba(255,255,255,0.85)}
+
+.status{margin-left:8px;color:rgba(255,255,255,0.75)}
+.errorBox{margin-top:10px;padding:10px;border:1px solid rgba(255,90,90,0.35);border-radius:14px;background:rgba(255,90,90,0.10)}
+.errorTitle{font-weight:700;font-size:12px;margin-bottom:6px;color:rgba(255,255,255,0.9)}
+.errorText{font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,"Liberation Mono","Courier New",monospace;font-size:11px;color:rgba(255,255,255,0.82);white-space:pre-wrap}
+.errorHint{margin-top:6px;color:rgba(255,255,255,0.68);font-size:12px}

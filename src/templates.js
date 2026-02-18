@@ -1,19 +1,31 @@
-// Template rectangles in NORMALIZED coordinates (0..1)
-// Each rect: { x, y, w, h } relative to page width/height.
-// STARTER defaults — tune to your documents.
+// Templates for redaction
+// Notes: NORMALIZED rects (0..1) relative to page size.
+// Surgery Notes: INCHES from the top (across full width), different height for page 1 vs other pages.
+// Asante Notes: INCHES top band differs by page, PLUS a bottom band on every page.
+
 export const TEMPLATES = {
   notes: {
     name: "Notes",
+    mode: "normalized_rects",
     rects: [
       { x: 0.0, y: 0.0, w: 1.0, h: 0.12 },
       { x: 0.0, y: 0.12, w: 0.55, h: 0.12 }
     ]
   },
-  surgery_center: {
-    name: "Surgery Center",
-    rects: [
-      { x: 0.0, y: 0.0, w: 1.0, h: 0.14 },
-      { x: 0.55, y: 0.12, w: 0.45, h: 0.18 }
-    ]
+
+  surgery_notes: {
+    name: "Surgery Notes",
+    mode: "top_band_inches",
+    topBandInches: { firstPage: 1.75, otherPages: 0.6 }
+  },
+
+  asante_notes: {
+    name: "Asante Notes",
+    mode: "bands_inches",
+    bandsInches: {
+      topFirstPage: 3.75,
+      topOtherPages: 0.65,
+      bottomAllPages: 0.65
+    }
   }
 };

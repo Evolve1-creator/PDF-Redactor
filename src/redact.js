@@ -6,26 +6,58 @@ async function renderPageToCanvas(page, maxWidth = 1400) {
   const viewport0 = page.getViewport({ scale: 1 });
   const scale = Math.min(maxWidth / viewport0.width, 3.0);
   const viewport = page.getViewport({ scale });
+
   const canvas = document.createElement("canvas");
   canvas.width = Math.floor(viewport.width);
   canvas.height = Math.floor(viewport.height);
+
   const ctx = canvas.getContext("2d", { alpha: false });
   await page.render({ canvasContext: ctx, viewport }).promise;
-  return canvas;
+
+  return { canvas, scale };
 }
 
-function drawRedactions(canvas, rectsNormalized) {
+function drawNormalizedRects(canvas, rectsNormalized) {
   const ctx = canvas.getContext("2d");
-  const W = canvas.width, H = canvas.height;
+  const W = canvas.width;
+  const H = canvas.height;
+
   ctx.save();
   ctx.fillStyle = "#000";
-  rectsNormalized.forEach(r => {
+  rectsNormalized.forEach((r) => {
     const x = Math.round(r.x * W);
     const y = Math.round(r.y * H);
     const w = Math.round(r.w * W);
     const h = Math.round(r.h * H);
     ctx.fillRect(x, y, w, h);
   });
+  ctx.restore();
+}
+
+function pxFromInches(inches, scale) {
+  return Math.round(inches * 72 * scale);
+}
+
+function drawTopBandInches(canvas, scale, inchesFromTop) {
+  const ctx = canvas.getContext("2d");
+  const W = canvas.width;
+  const bandPx = pxFromInches(inchesFromTop, scale);
+
+  ctx.save();
+  ctx.fillStyle = "#000";
+  ctx.fillRect(0, 0, W, bandPx);
+  ctx.restore();
+}
+
+function drawBottomBandInches(canvas, scale, inchesFromBottom) {
+  const ctx = canvas.getContext("2d");
+  const W = canvas.width;
+  const H = canvas.height;
+  const bandPx = pxFromInches(inchesFromBottom, scale);
+
+  ctx.save();
+  ctx.fillStyle = "#000";
+  ctx.fillRect(0, Math.max(0, H - bandPx), W, bandPx);
   ctx.restore();
 }
 
@@ -55,8 +87,18 @@ export async function redactPdfArrayBuffer(arrayBuffer, templateKey, options = {
 
   for (let i = 1; i <= pdf.numPages; i++) {
     const page = await pdf.getPage(i);
-    const canvas = await renderPageToCanvas(page, maxWidth);
-    drawRedactions(canvas, template.rects);
+    const { canvas, scale } = await renderPageToCanvas(page, maxWidth);
+
+    if (template.mode === "top_band_inches") {
+      const inches = i === 1 ? template.topBandInches.firstPage : template.topBandInches.otherPages;
+      drawTopBandInches(canvas, scale, inches);
+    } else if (template.mode === "bands_inches") {
+      const topInches = i === 1 ? template.bandsInches.topFirstPage : template.bandsInches.topOtherPages;
+      drawTopBandInches(canvas, scale, topInches);
+      drawBottomBandInches(canvas, scale, template.bandsInches.bottomAllPages);
+    } else {
+      drawNormalizedRects(canvas, template.rects || []);
+    }
 
     const pngBytes = await canvasToPngBytes(canvas);
     if (includeImages) {

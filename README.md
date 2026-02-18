@@ -28,3 +28,9 @@ Edit `src/templates.js` (rectangles are normalized 0..1).
 
 ## Fixes
 - F1.1: Fix pdfjs worker import for Vercel/Vite builds (pdf.worker default export issue).
+
+
+## Fixes
+- F1.2: Add Surgery Notes rule: page 1 redact top 1.75 inches; pages 2+ redact top 0.6 inches.
+
+- F1.3: Add Asante Notes template: page 1 top 3.75in, page 2+ top 0.65in, all pages bottom 0.65in.

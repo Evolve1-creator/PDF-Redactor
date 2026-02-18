@@ -3,6 +3,7 @@ import JSZip from "jszip";
 import { saveAs } from "file-saver";
 import { TEMPLATES } from "./templates";
 import { redactPdfArrayBuffer } from "./redact";
+import TemplateTuner from "./TemplateTuner.jsx";
 
 function humanSize(bytes) {
   const units = ["B","KB","MB","GB"];
@@ -16,6 +17,7 @@ export default function App() {
   const [includeImages, setIncludeImages] = useState(false);
   const [files, setFiles] = useState([]);
   const [busy, setBusy] = useState(false);
+  const [tunerOpen, setTunerOpen] = useState(false);
   const [log, setLog] = useState([]);
 
   const templateOptions = useMemo(() => Object.entries(TEMPLATES), []);
@@ -93,6 +95,9 @@ export default function App() {
 
         <div className="row">
           <input type="file" multiple accept="application/pdf" onChange={onPickFiles} disabled={busy}/>
+          <button className="btn ghost" onClick={() => setTunerOpen(true)} disabled={busy || !files.length}>
+            Tune Template
+          </button>
           <button className="btn" onClick={runBatch} disabled={busy || !files.length}>
             {busy ? "Processing..." : "Redact + Download ZIP"}
           </button>
@@ -117,6 +122,13 @@ export default function App() {
           Edit <code>src/templates.js</code>. Rectangles are normalized (0..1) so they scale to page size.
         </p>
       </section>
+
+      <TemplateTuner
+        open={tunerOpen}
+        onClose={() => setTunerOpen(false)}
+        templateKey={templateKey}
+        sampleFile={files?.[0]}
+      />
     </div>
   );
 }

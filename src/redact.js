@@ -1,6 +1,8 @@
 import { PDFDocument } from "pdf-lib";
 import pdfjsLib from "./pdfWorker";
 import { TEMPLATES } from "./templates";
+import { loadTemplateOverride } from "./templateOverrides";
+import { pxFromInches } from "./inchUtils";
 
 async function renderPageToCanvas(page, maxWidth = 1400) {
   const viewport0 = page.getViewport({ scale: 1 });
@@ -34,10 +36,6 @@ function drawNormalizedRects(canvas, rectsNormalized) {
   ctx.restore();
 }
 
-function pxFromInches(inches, scale) {
-  return Math.round(inches * 72 * scale);
-}
-
 function drawTopBandInches(canvas, scale, inchesFromTop) {
   const ctx = canvas.getContext("2d");
   const W = canvas.width;
@@ -61,6 +59,28 @@ function drawBottomBandInches(canvas, scale, inchesFromBottom) {
   ctx.restore();
 }
 
+function resolveTemplate(templateKey) {
+  const base = TEMPLATES[templateKey];
+  if (!base) return null;
+  const ov = loadTemplateOverride(templateKey);
+  if (!ov) return base;
+
+  // shallow merge for supported fields
+  if (base.mode === "top_band_inches") {
+    return {
+      ...base,
+      topBandInches: { ...base.topBandInches, ...ov.topBandInches }
+    };
+  }
+  if (base.mode === "bands_inches") {
+    return {
+      ...base,
+      bandsInches: { ...base.bandsInches, ...ov.bandsInches }
+    };
+  }
+  return base;
+}
+
 async function canvasToPngBytes(canvas) {
   return new Promise((resolve, reject) => {
     canvas.toBlob(async (blob) => {
@@ -76,7 +96,7 @@ async function canvasToPngBytes(canvas) {
 
 export async function redactPdfArrayBuffer(arrayBuffer, templateKey, options = {}) {
   const { includeImages = false, maxWidth = 1400 } = options;
-  const template = TEMPLATES[templateKey];
+  const template = resolveTemplate(templateKey);
   if (!template) throw new Error(`Unknown template: ${templateKey}`);
 
   const loadingTask = pdfjsLib.getDocument({ data: arrayBuffer });

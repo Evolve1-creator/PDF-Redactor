@@ -38,3 +38,5 @@ Edit `src/templates.js` (rectangles are normalized 0..1).
 - F1.4: Add Asante Blue template (same band rules as Asante Notes).
 
 - F1.5: Change all 0.65-inch band redactions to 0.40 inches across templates.
+
+- F1.6: Add Template Tuner (band-only) with preview + save to localStorage; applies to batch uploads.

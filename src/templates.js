@@ -1,7 +1,7 @@
 // Templates for redaction
 // Notes: NORMALIZED rects (0..1) relative to page size.
 // Surgery Notes: INCHES from the top (across full width), different height for page 1 vs other pages.
-// Asante Notes: INCHES top band differs by page, PLUS a bottom band on every page.
+// Asante Notes / Asante Blue: INCHES top band differs by page, PLUS a bottom band on every page.
 
 export const TEMPLATES = {
   notes: {
@@ -24,8 +24,20 @@ export const TEMPLATES = {
     mode: "bands_inches",
     bandsInches: {
       topFirstPage: 3.75,
-      topOtherPages: 0.65,
-      bottomAllPages: 0.65
+      topOtherPages: 0.40,
+      bottomAllPages: 0.40
+    }
+  },
+
+  asante_blue: {
+    name: "Asante Blue",
+    mode: "bands_inches",
+    // Same parameters as Asante Notes:
+    // Page 1 top 3.75in, pages 2+ top 0.40in, all pages bottom 0.40in
+    bandsInches: {
+      topFirstPage: 3.75,
+      topOtherPages: 0.40,
+      bottomAllPages: 0.40
     }
   }
 };

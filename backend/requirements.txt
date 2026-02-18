@@ -1,7 +1,0 @@
-fastapi
-uvicorn
-python-multipart
-pillow
-pypdfium2
-reportlab
-pytesseract

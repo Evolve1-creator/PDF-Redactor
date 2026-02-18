@@ -24,3 +24,7 @@ npm run build
 
 ## Template tuning
 Edit `src/templates.js` (rectangles are normalized 0..1).
+
+
+## Fixes
+- F1.1: Fix pdfjs worker import for Vercel/Vite builds (pdf.worker default export issue).

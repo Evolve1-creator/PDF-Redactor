@@ -5,7 +5,7 @@
 
 export const TEMPLATES = {
   notes: {
-    name: "General Notes",
+    name: "Notes",
     mode: "normalized_rects",
     rects: [
       { x: 0.0, y: 0.0, w: 1.0, h: 0.12 },

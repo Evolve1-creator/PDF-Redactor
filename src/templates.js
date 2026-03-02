@@ -1,6 +1,6 @@
 // Templates for redaction
 // Notes: NORMALIZED rects (0..1) relative to page size.
-// Surgery Notes: page-1-only normalized header block sized to fully cover the demographic header.
+// Surgery Notes: INCHES from the top (across full width), different height for page 1 vs other pages.
 // Asante Notes / Asante Blue: INCHES top band differs by page, PLUS a bottom band on every page.
 
 export const TEMPLATES = {
@@ -15,13 +15,8 @@ export const TEMPLATES = {
 
   surgery_notes: {
     name: "Surgery Notes",
-    mode: "page_rects_normalized",
-    // Cover the full first-page header down past the address line.
-    firstPageRects: [
-      { x: 0.0, y: 0.0, w: 1.0, h: 0.24 }
-    ],
-    // Surgery notes should not be redacted again on following pages.
-    otherPagesRects: []
+    mode: "top_band_inches",
+    topBandInches: { firstPage: 3.0, otherPages: 0.0 }
   },
 
   asante_notes: {

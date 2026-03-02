@@ -1,5 +1,5 @@
 // Persist per-template tuning in localStorage so batch uploads use the same saved settings.
-const KEY_PREFIX = "simple_redactor_template_override_v1:";
+const KEY_PREFIX = "simple_redactor_template_override_v2:";
 
 export function loadTemplateOverride(templateKey) {
   try {

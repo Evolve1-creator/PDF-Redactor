@@ -81,6 +81,11 @@ function resolveTemplate(templateKey) {
   return base;
 }
 
+function drawPageRectsNormalized(canvas, rectsNormalized = []) {
+  if (!rectsNormalized.length) return;
+  drawNormalizedRects(canvas, rectsNormalized);
+}
+
 async function canvasToPngBytes(canvas) {
   return new Promise((resolve, reject) => {
     canvas.toBlob(async (blob) => {
@@ -116,6 +121,9 @@ export async function redactPdfArrayBuffer(arrayBuffer, templateKey, options = {
       const topInches = i === 1 ? template.bandsInches.topFirstPage : template.bandsInches.topOtherPages;
       drawTopBandInches(canvas, scale, topInches);
       drawBottomBandInches(canvas, scale, template.bandsInches.bottomAllPages);
+    } else if (template.mode === "page_rects_normalized") {
+      const rects = i === 1 ? (template.firstPageRects || []) : (template.otherPagesRects || []);
+      drawPageRectsNormalized(canvas, rects);
     } else {
       drawNormalizedRects(canvas, template.rects || []);
     }

@@ -16,7 +16,7 @@ export const TEMPLATES = {
   surgery_notes: {
     name: "Surgery Notes",
     mode: "top_band_inches",
-    topBandInches: { firstPage: 3.0, otherPages: 0.0 }
+    topBandInches: { firstPage: 2.5, otherPages: 0.0 }
   },
 
   asante_notes: {
